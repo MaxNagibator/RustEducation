@@ -3,108 +3,87 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use futures::future::join_all;
+use dotenvy::dotenv;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use std::{env, fs};
 use teloxide::prelude::*;
-use tokio_postgres::{Error, NoTls};
+use tracing::{error, info};
+
+mod config;
+mod db;
+
+use crate::config::Config;
 
 #[tokio::main]
-async fn main() {
-    let file_path = "E:\\bobgroup\\repo\\TelegramPomogatorBot\\token.txt";
-    //file_path = "E:\\bobgroup\\projects\\Rust\\TestFile.txt";
-    //let test =  fs::read_to_string(file_path).unwrap();
-    let test = fs::read_to_string(file_path).unwrap();
-    let key = "TELOXIDE_TOKEN";
-    unsafe {
-        env::set_var(key, test);
-    }
-    let bot = Bot::from_env();
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt::init();
+    dotenv().ok();
 
-    println!("start");
-    teloxide::repl(bot, |bot: Bot, msg: Message| async move {
-        println!("Telegram bot: {:?}", msg);
+    info!("Starting application");
+
+    let key = "TELOXIDE_TOKEN";
+    if env::var(key).is_err() {
+        let file_path = "E:\\bobgroup\\repo\\TelegramPomogatorBot\\token.txt";
+        //file_path = "E:\\bobgroup\\projects\\Rust\\TestFile.txt";
+        let test = fs::read_to_string(file_path).expect("Something went wrong reading the file");
+
+        unsafe {
+            env::set_var(key, test);
+        }
+    }
+
+    let bot = Bot::from_env();
+    let bot_task = teloxide::repl(bot, |bot: Bot, msg: Message| async move {
+        let config = Config::from_env().unwrap();
+        let pool = db::create_pool(&config.database_url).unwrap();
+
+        info!("Received message: {:?}", msg);
         bot.send_dice(msg.chat.id).await?;
-        match msg.text() {
-            Some(text) => {
-                // println!("{}", text);
-                if text == "join" {
-                    let from = msg.from.unwrap();
-                    let username = from.username.unwrap();
+
+        if let Some(text) = msg.text() {
+            if text == "join" {
+                if let Some(from) = msg.from {
+                    let username = from.username.unwrap_or_default();
                     let first_name = from.first_name;
-                    insert_user(msg.chat.id.0 as i32, username, first_name)
+
+                    db::insert_user(&pool, msg.chat.id.0 as i32, username, first_name)
                         .await
+                        .map_err(|e| {
+                            error!("Database error: {}", e);
+                            e
+                        })
                         .unwrap();
                 }
-                bot.send_message(msg.chat.id, "privet malish?").await?;
-                //dialogue.update(State::ReceiveAge { full_name: text.into() }).await?;
             }
-            None => {
-                bot.send_message(msg.chat.id, "Send me plain text.").await?;
-            }
+            bot.send_message(msg.chat.id, "privet malish?").await?;
+        } else {
+            bot.send_message(msg.chat.id, "Send me plain text.").await?;
         }
 
         Ok(())
-    })
-    .await;
-
-    println!("start api");
-    tracing_subscriber::fmt::init();
-
-    let app = Router::new()
-        .route("/", get(root))
-        .route("/users", post(create_user));
-
-    let listener = tokio::net::TcpListener::bind("localhost:3000")
-        .await
-        .unwrap();
-    axum::serve(listener, app).await.unwrap();
-
-    println!("running on port 3000");
-}
-
-async fn insert_user(chat_id: i32, username: String, first_name: String) -> Result<(), Error> {
-    /*let mut client = Client::connect(
-        "postgresql://postgres:RjirfLeyz@localhost:5432/rust-dev",
-        NoTls,
-    )
-    .await?;*/
-
-    let (client, connection) = tokio_postgres::connect(
-        "postgresql://postgres:RjirfLeyz@localhost:5432/rust-dev",
-        NoTls,
-    )
-    .await?;
-
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
-        }
     });
 
-    let mut is_found = false;
+    let server_task = async {
+        let config = Config::from_env()?;
+        let pool = db::create_pool(&config.database_url)?;
 
-    for row in client
-        .query(
-            "SELECT name, first_name FROM users WHERE chat_id = $1;",
-            &[&chat_id],
-        )
-        .await?
-    {
-        is_found = true;
-        let username2: &str = row.get(0);
-        let first_name2: &str = row.get(1);
-        println!("username exists: {} {}", username2, first_name2);
-    }
+        let app = Router::new()
+            .route("/", get(root))
+            .route("/users", post(create_user))
+            .with_state(pool);
 
-    if !is_found {
-        client
-            .query(
-                "INSERT INTO users (chat_id, name, first_name) VALUES ($1, $2, $3);",
-                &[&chat_id, &username, &first_name],
-            )
-            .await?;
+        let server_addr = config.server_address.clone();
+        let listener = tokio::net::TcpListener::bind(&server_addr).await?;
+        info!("Server running on {}", server_addr);
+
+        axum::serve(listener, app).await?;
+        Ok::<(), Box<dyn std::error::Error>>(())
+    };
+
+    tokio::select! {
+        result = bot_task => result,
+        result = server_task => result?,
     }
 
     Ok(())
@@ -118,9 +97,8 @@ async fn root() -> &'static str {
         let task = sleep_time_complex(num, 4 - num);
         tasks.push(task);
     }
-    join_all(tasks).await;
-    //tokio::join!(tasks);
 
+    futures::future::join_all(tasks).await;
     "2!"
 }
 
