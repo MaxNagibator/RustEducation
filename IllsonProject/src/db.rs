@@ -26,3 +26,29 @@ pub async fn insert_user(
         .await?;
     Ok(())
 }
+
+#[derive(Debug)]
+pub struct UserInfo {
+    pub chat_id: i32,
+    pub username: String,
+    pub first_name: String,
+}
+
+pub async fn get_user(
+    pool: &PgPool,
+    chat_id: i32,
+) -> Result<Option<UserInfo>, Box<dyn std::error::Error>> {
+    let client = pool.get().await?;
+    let row = client
+        .query_opt(
+            "SELECT chat_id, name, first_name FROM users WHERE chat_id = $1",
+            &[&chat_id],
+        )
+        .await?;
+
+    Ok(row.map(|r| UserInfo {
+        chat_id: r.get(0),
+        username: r.get(1),
+        first_name: r.get(2),
+    }))
+}

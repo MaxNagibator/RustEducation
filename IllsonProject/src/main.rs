@@ -5,87 +5,174 @@ use axum::{
 };
 use dotenvy::dotenv;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Duration;
 use std::{env, fs};
-use teloxide::prelude::*;
-use tracing::{error, info};
+use teloxide::{prelude::*, types::User};
+use tracing::{debug, error, info};
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
 mod config;
 mod db;
 
 use crate::config::Config;
+use crate::db::PgPool;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt::init();
-    dotenv().ok();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_target(true)
+        .with_timer(tracing_subscriber::fmt::time::time())
+        .init();
 
-    info!("Starting application");
+    dotenv().ok();
+    info!("Начало инициализации приложения");
 
     let key = "TELOXIDE_TOKEN";
     if env::var(key).is_err() {
         let file_path = "E:\\bobgroup\\repo\\TelegramPomogatorBot\\token.txt";
+        debug!("Загрузка токена из файла: {}", file_path);
         //file_path = "E:\\bobgroup\\projects\\Rust\\TestFile.txt";
-        let test = fs::read_to_string(file_path).expect("Something went wrong reading the file");
-
+        let token = fs::read_to_string(file_path)
+            .inspect_err(|e| error!("Ошибка чтения файла с токеном: {}", e))?;
         unsafe {
-            env::set_var(key, test);
+            env::set_var(key, token.trim());
         }
     }
+
+    let config =
+        Config::from_env().inspect_err(|e| error!("Ошибка загрузки конфигурации: {}", e))?;
+    debug!("Конфигурация успешно загружена");
+
+    let pool = db::create_pool(&config.database_url)
+        .inspect_err(|e| error!("Ошибка создания пула БД: {}", e))?;
+    let pool = Arc::new(pool);
+    info!("Пул соединений с БД создан");
+
+    run_bot(pool.clone())
+        .await
+        .inspect_err(|e| error!("Ошибка в работе бота: {}", e))?;
+    run_server(pool.clone(), config.server_address.clone())
+        .await
+        .inspect_err(|e| error!("Ошибка в работе сервера: {}", e))?;
+
+    info!("Приложение завершило работу");
+    Ok(())
+}
+
+async fn run_bot(pool: Arc<PgPool>) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Инициализация бота");
 
     let bot = Bot::from_env();
-    let bot_task = teloxide::repl(bot, |bot: Bot, msg: Message| async move {
-        let config = Config::from_env().unwrap();
-        let pool = db::create_pool(&config.database_url).unwrap();
+    let schema = Update::filter_message()
+        .filter_map(|update: Update| update.from().cloned())
+        .endpoint(process_message);
 
-        info!("Received message: {:?}", msg);
-        bot.send_dice(msg.chat.id).await?;
+    Dispatcher::builder(bot, schema)
+        .dependencies(dptree::deps![pool])
+        .build()
+        .dispatch()
+        .await;
 
-        if let Some(text) = msg.text() {
-            if text == "join" {
-                if let Some(from) = msg.from {
-                    let username = from.username.unwrap_or_default();
-                    let first_name = from.first_name;
+    info!("Бот остановлен");
+    Ok(())
+}
 
-                    db::insert_user(&pool, msg.chat.id.0 as i32, username, first_name)
-                        .await
-                        .map_err(|e| {
-                            error!("Database error: {}", e);
-                            e
-                        })
-                        .unwrap();
+async fn run_server(pool: Arc<PgPool>, addr: String) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Запуск сервера на {}", addr);
+
+    let app = Router::new()
+        .route("/", get(root))
+        .route("/users", post(create_user))
+        .with_state(pool)
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http()
+                .make_span_with(
+                    tower_http::trace::DefaultMakeSpan::new()
+                        .level(tracing::Level::INFO)
+                        .include_headers(true),
+                )
+                .on_response(
+                    tower_http::trace::DefaultOnResponse::new().level(tracing::Level::INFO),
+                ),
+        );
+
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .inspect_err(|e| error!("Ошибка привязки к {}: {}", addr, e))?;
+
+    info!("Сервер успешно запущен");
+    axum::serve(listener, app)
+        .await
+        .inspect_err(|e| error!("Ошибка сервера: {}", e))?;
+
+    info!("Сервер остановлен");
+    Ok(())
+}
+
+async fn process_message(
+    bot: Bot,
+    user: User,
+    pool: Arc<PgPool>,
+    msg: Message,
+) -> Result<(), Error> {
+    info!("Обработка сообщения: {:?}", msg);
+
+    if let Some(text) = msg.text() {
+        let command = text.trim().to_lowercase();
+        debug!("Получена команда: '{}'", command);
+
+        match command.as_str() {
+            "join" => {
+                let username = user.username.unwrap_or_default();
+                let first_name = user.first_name;
+
+                db::insert_user(&pool, user.id.0 as i32, username, first_name.clone())
+                    .await
+                    .inspect_err(|e| error!("Ошибка БД: {}", e))
+                    .unwrap();
+
+                bot.send_message(user.id, format!("Добро пожаловать, {}! 🎉", first_name))
+                    .await
+                    .inspect_err(|e| error!("Ошибка отправки сообщения: {}", e))
+                    .unwrap();
+            }
+            "me" => {
+                if let Some(user1) = db::get_user(&pool, user.id.0 as i32).await.unwrap() {
+                    bot.send_message(
+                        user.id,
+                        format!(
+                            "Ваш профиль:\nID: {}\nUsername: @{}\nИмя: {}",
+                            user1.chat_id, user1.username, user1.first_name
+                        ),
+                    )
+                    .await?;
+                } else {
+                    bot.send_message(
+                        user.id,
+                        "Малыш, команда только для членов общества. Напиши 'join'",
+                    )
+                    .await?;
                 }
             }
-            bot.send_message(msg.chat.id, "privet malish?").await?;
-        } else {
-            bot.send_message(msg.chat.id, "Send me plain text.").await?;
+            _ => {
+                if let Some(user1) = db::get_user(&pool, user.id.0 as i32).await.unwrap() {
+                    bot.send_message(
+                        user.id,
+                        format!("Привет, {}! Чем могу помочь?", user1.first_name),
+                    )
+                    .await?;
+                } else {
+                    bot.send_message(user.id, "Привет, малыш! Напиши 'join' для пополнения рядов")
+                        .await?;
+                }
+            }
         }
-
-        Ok(())
-    });
-
-    let server_task = async {
-        let config = Config::from_env()?;
-        let pool = db::create_pool(&config.database_url)?;
-
-        let app = Router::new()
-            .route("/", get(root))
-            .route("/users", post(create_user))
-            .with_state(pool);
-
-        let server_addr = config.server_address.clone();
-        let listener = tokio::net::TcpListener::bind(&server_addr).await?;
-        info!("Server running on {}", server_addr);
-
-        axum::serve(listener, app).await?;
-        Ok::<(), Box<dyn std::error::Error>>(())
-    };
-
-    tokio::select! {
-        result = bot_task => result,
-        result = server_task => result?,
+    } else {
+        bot.send_message(user.id, "Пожалуйста, отправляй текстовые сообщения")
+            .await?;
     }
-
     Ok(())
 }
 
@@ -108,8 +195,8 @@ async fn sleep_time_complex(name: u64, secs: u64) {
     println!("bla {name} finish {secs}",);
 }
 
-async fn create_user(Json(payload): Json<CreateUser>) -> (StatusCode, Json<User>) {
-    let user = User {
+async fn create_user(Json(payload): Json<CreateUser>) -> (StatusCode, Json<User2>) {
+    let user = User2 {
         id: 6062171111111,
         username: payload.username,
     };
@@ -127,7 +214,7 @@ struct CreateUser {
 }
 
 #[derive(Serialize)]
-struct User {
+struct User2 {
     id: u64,
     username: String,
 }
