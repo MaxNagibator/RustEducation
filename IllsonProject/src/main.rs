@@ -3,110 +3,176 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use futures::future::join_all;
+use dotenvy::dotenv;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Duration;
 use std::{env, fs};
-use teloxide::prelude::*;
-use tokio_postgres::{Error, NoTls};
+use teloxide::{prelude::*, types::User};
+use tracing::{debug, error, info};
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
+
+mod config;
+mod db;
+
+use crate::config::Config;
+use crate::db::PgPool;
 
 #[tokio::main]
-async fn main() {
-    let file_path = "E:\\bobgroup\\repo\\TelegramPomogatorBot\\token.txt";
-    //file_path = "E:\\bobgroup\\projects\\Rust\\TestFile.txt";
-    //let test =  fs::read_to_string(file_path).unwrap();
-    let test = fs::read_to_string(file_path).unwrap();
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_target(true)
+        .with_timer(tracing_subscriber::fmt::time::time())
+        .init();
+
+    dotenv().ok();
+    info!("Начало инициализации приложения");
+
     let key = "TELOXIDE_TOKEN";
-    unsafe {
-        env::set_var(key, test);
-    }
-    let bot = Bot::from_env();
-
-    println!("start");
-    teloxide::repl(bot, |bot: Bot, msg: Message| async move {
-        println!("Telegram bot: {:?}", msg);
-        bot.send_dice(msg.chat.id).await?;
-        match msg.text() {
-            Some(text) => {
-                // println!("{}", text);
-                if text == "join" {
-                    let from = msg.from.unwrap();
-                    let username = from.username.unwrap();
-                    let first_name = from.first_name;
-                    insert_user(msg.chat.id.0 as i32, username, first_name)
-                        .await
-                        .unwrap();
-                }
-                bot.send_message(msg.chat.id, "privet malish?").await?;
-                //dialogue.update(State::ReceiveAge { full_name: text.into() }).await?;
-            }
-            None => {
-                bot.send_message(msg.chat.id, "Send me plain text.").await?;
-            }
+    if env::var(key).is_err() {
+        let file_path = "E:\\bobgroup\\repo\\TelegramPomogatorBot\\token.txt";
+        debug!("Загрузка токена из файла: {}", file_path);
+        //file_path = "E:\\bobgroup\\projects\\Rust\\TestFile.txt";
+        let token = fs::read_to_string(file_path)
+            .inspect_err(|e| error!("Ошибка чтения файла с токеном: {}", e))?;
+        unsafe {
+            env::set_var(key, token.trim());
         }
+    }
 
-        Ok(())
-    })
-    .await;
+    let config =
+        Config::from_env().inspect_err(|e| error!("Ошибка загрузки конфигурации: {}", e))?;
+    debug!("Конфигурация успешно загружена");
 
-    println!("start api");
-    tracing_subscriber::fmt::init();
+    let pool = db::create_pool(&config.database_url)
+        .inspect_err(|e| error!("Ошибка создания пула БД: {}", e))?;
+    let pool = Arc::new(pool);
+    info!("Пул соединений с БД создан");
+
+    run_bot(pool.clone())
+        .await
+        .inspect_err(|e| error!("Ошибка в работе бота: {}", e))?;
+    run_server(pool.clone(), config.server_address.clone())
+        .await
+        .inspect_err(|e| error!("Ошибка в работе сервера: {}", e))?;
+
+    info!("Приложение завершило работу");
+    Ok(())
+}
+
+async fn run_bot(pool: Arc<PgPool>) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Инициализация бота");
+
+    let bot = Bot::from_env();
+    let schema = Update::filter_message()
+        .filter_map(|update: Update| update.from().cloned())
+        .endpoint(process_message);
+
+    Dispatcher::builder(bot, schema)
+        .dependencies(dptree::deps![pool])
+        .build()
+        .dispatch()
+        .await;
+
+    info!("Бот остановлен");
+    Ok(())
+}
+
+async fn run_server(pool: Arc<PgPool>, addr: String) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Запуск сервера на {}", addr);
 
     let app = Router::new()
         .route("/", get(root))
-        .route("/users", post(create_user));
+        .route("/users", post(create_user))
+        .with_state(pool)
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http()
+                .make_span_with(
+                    tower_http::trace::DefaultMakeSpan::new()
+                        .level(tracing::Level::INFO)
+                        .include_headers(true),
+                )
+                .on_response(
+                    tower_http::trace::DefaultOnResponse::new().level(tracing::Level::INFO),
+                ),
+        );
 
-    let listener = tokio::net::TcpListener::bind("localhost:3000")
+    let listener = tokio::net::TcpListener::bind(&addr)
         .await
-        .unwrap();
-    axum::serve(listener, app).await.unwrap();
+        .inspect_err(|e| error!("Ошибка привязки к {}: {}", addr, e))?;
 
-    println!("running on port 3000");
+    info!("Сервер успешно запущен");
+    axum::serve(listener, app)
+        .await
+        .inspect_err(|e| error!("Ошибка сервера: {}", e))?;
+
+    info!("Сервер остановлен");
+    Ok(())
 }
 
-async fn insert_user(chat_id: i32, username: String, first_name: String) -> Result<(), Error> {
-    /*let mut client = Client::connect(
-        "postgresql://postgres:RjirfLeyz@localhost:5432/rust-dev",
-        NoTls,
-    )
-    .await?;*/
+async fn process_message(
+    bot: Bot,
+    user: User,
+    pool: Arc<PgPool>,
+    msg: Message,
+) -> Result<(), Error> {
+    info!("Обработка сообщения: {:?}", msg);
 
-    let (client, connection) = tokio_postgres::connect(
-        "postgresql://postgres:RjirfLeyz@localhost:5432/rust-dev",
-        NoTls,
-    )
-    .await?;
+    if let Some(text) = msg.text() {
+        let command = text.trim().to_lowercase();
+        debug!("Получена команда: '{}'", command);
 
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+        match command.as_str() {
+            "join" => {
+                let username = user.username.unwrap_or_default();
+                let first_name = user.first_name;
+
+                db::insert_user(&pool, user.id.0 as i32, username, first_name.clone())
+                    .await
+                    .inspect_err(|e| error!("Ошибка БД: {}", e))
+                    .unwrap();
+
+                bot.send_message(user.id, format!("Добро пожаловать, {}! 🎉", first_name))
+                    .await
+                    .inspect_err(|e| error!("Ошибка отправки сообщения: {}", e))
+                    .unwrap();
+            }
+            "me" => {
+                if let Some(user1) = db::get_user(&pool, user.id.0 as i32).await.unwrap() {
+                    bot.send_message(
+                        user.id,
+                        format!(
+                            "Ваш профиль:\nID: {}\nUsername: @{}\nИмя: {}",
+                            user1.chat_id, user1.username, user1.first_name
+                        ),
+                    )
+                    .await?;
+                } else {
+                    bot.send_message(
+                        user.id,
+                        "Малыш, команда только для членов общества. Напиши 'join'",
+                    )
+                    .await?;
+                }
+            }
+            _ => {
+                if let Some(user1) = db::get_user(&pool, user.id.0 as i32).await.unwrap() {
+                    bot.send_message(
+                        user.id,
+                        format!("Привет, {}! Чем могу помочь?", user1.first_name),
+                    )
+                    .await?;
+                } else {
+                    bot.send_message(user.id, "Привет, малыш! Напиши 'join' для пополнения рядов")
+                        .await?;
+                }
+            }
         }
-    });
-
-    let mut is_found = false;
-
-    for row in client
-        .query(
-            "SELECT name, first_name FROM users WHERE chat_id = $1;",
-            &[&chat_id],
-        )
-        .await?
-    {
-        is_found = true;
-        let username2: &str = row.get(0);
-        let first_name2: &str = row.get(1);
-        println!("username exists: {} {}", username2, first_name2);
-    }
-
-    if !is_found {
-        client
-            .query(
-                "INSERT INTO users (chat_id, name, first_name) VALUES ($1, $2, $3);",
-                &[&chat_id, &username, &first_name],
-            )
+    } else {
+        bot.send_message(user.id, "Пожалуйста, отправляй текстовые сообщения")
             .await?;
     }
-
     Ok(())
 }
 
@@ -118,9 +184,8 @@ async fn root() -> &'static str {
         let task = sleep_time_complex(num, 4 - num);
         tasks.push(task);
     }
-    join_all(tasks).await;
-    //tokio::join!(tasks);
 
+    futures::future::join_all(tasks).await;
     "2!"
 }
 
@@ -130,8 +195,8 @@ async fn sleep_time_complex(name: u64, secs: u64) {
     println!("bla {name} finish {secs}",);
 }
 
-async fn create_user(Json(payload): Json<CreateUser>) -> (StatusCode, Json<User>) {
-    let user = User {
+async fn create_user(Json(payload): Json<CreateUser>) -> (StatusCode, Json<User2>) {
+    let user = User2 {
         id: 6062171111111,
         username: payload.username,
     };
@@ -149,7 +214,7 @@ struct CreateUser {
 }
 
 #[derive(Serialize)]
-struct User {
+struct User2 {
     id: u64,
     username: String,
 }
