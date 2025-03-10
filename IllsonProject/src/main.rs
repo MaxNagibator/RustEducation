@@ -5,9 +5,14 @@ use axum::{
 };
 use dotenvy::dotenv;
 use serde::{Deserialize, Serialize};
+use std::any::Any;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{env, fs};
+use teloxide::types::{
+    ChatAction, InlineKeyboardButton, InlineKeyboardButtonKind, InlineKeyboardMarkup,
+    KeyboardButton, MenuButton, ReplyMarkup,
+};
 use teloxide::{prelude::*, types::User};
 use tracing::{debug, error, info};
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -67,7 +72,8 @@ async fn run_bot(pool: Arc<PgPool>) -> Result<(), Box<dyn std::error::Error>> {
     let bot = Bot::from_env();
     let schema = Update::filter_message()
         .filter_map(|update: Update| update.from().cloned())
-        .endpoint(process_message);
+        .endpoint(process_message)
+        .branch(Update::filter_callback_query().endpoint(handle_callback));
 
     Dispatcher::builder(bot, schema)
         .dependencies(dptree::deps![pool])
@@ -138,6 +144,19 @@ async fn process_message(
                     .inspect_err(|e| error!("Ошибка отправки сообщения: {}", e))
                     .unwrap();
             }
+            "leave" => {
+                let first_name = user.first_name;
+
+                db::delete_user(&pool, user.id.0 as i32)
+                    .await
+                    .inspect_err(|e| error!("Ошибка БД: {}", e))
+                    .unwrap();
+
+                bot.send_message(user.id, format!("Приходите к нам ещё, {}! 🎉", first_name))
+                    .await
+                    .inspect_err(|e| error!("Ошибка отправки сообщения: {}", e))
+                    .unwrap();
+            }
             "me" => {
                 if let Some(user1) = db::get_user(&pool, user.id.0 as i32).await.unwrap() {
                     bot.send_message(
@@ -148,6 +167,27 @@ async fn process_message(
                         ),
                     )
                     .await?;
+
+                    let keyboard = InlineKeyboardMarkup::new(vec![
+                        vec![
+                            InlineKeyboardButton::new(
+                                "Кнопка 1",
+                                InlineKeyboardButtonKind::CallbackData("opt1".to_string()),
+                            ),
+                            InlineKeyboardButton::new(
+                                "Кнопка 2",
+                                InlineKeyboardButtonKind::CallbackData("opt2".to_string()),
+                            ),
+                        ],
+                        vec![InlineKeyboardButton::new(
+                            "Длинная",
+                            InlineKeyboardButtonKind::CallbackData("opt3".to_string()),
+                        )],
+                    ]);
+
+                    bot.send_message(user.id, "Выберите опцию:")
+                        .reply_markup(keyboard)
+                        .await?;
                 } else {
                     bot.send_message(
                         user.id,

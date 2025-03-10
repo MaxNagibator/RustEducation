@@ -26,6 +26,13 @@ pub async fn insert_user(
         .await?;
     Ok(())
 }
+pub async fn delete_user(pool: &PgPool, chat_id: i32) -> Result<(), Box<dyn std::error::Error>> {
+    let client = pool.get().await?;
+    client
+        .execute("DELETE FROM users WHERE chat_id = $1", &[&chat_id])
+        .await?;
+    Ok(())
+}
 
 #[derive(Debug)]
 pub struct UserInfo {
