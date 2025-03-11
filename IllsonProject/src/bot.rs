@@ -17,6 +17,7 @@ use tracing::{error, info};
 
 pub async fn run_bot(pool: Arc<Pool>) -> Result<(), Box<dyn Error + Send + Sync>> {
     let bot = Bot::from_env();
+    bot.set_my_commands(Command::bot_commands()).await?;
 
     let handler = dptree::entry()
         .branch(
@@ -24,8 +25,7 @@ pub async fn run_bot(pool: Arc<Pool>) -> Result<(), Box<dyn Error + Send + Sync>
                 .filter_map(|update: Update| update.from().cloned())
                 .endpoint(process_message),
         )
-        .branch(Update::filter_callback_query().endpoint(callback_handler))
-        .branch(Update::filter_inline_query().endpoint(inline_query_handler));
+        .branch(Update::filter_callback_query().endpoint(callback_handler));
 
     Dispatcher::builder(bot, handler)
         .dependencies(dptree::deps![pool.clone()])
@@ -36,41 +36,80 @@ pub async fn run_bot(pool: Arc<Pool>) -> Result<(), Box<dyn Error + Send + Sync>
 
     Ok(())
 }
-
-#[derive(BotCommands)]
+#[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase")]
 enum Command {
-    /// Справка
-    #[command(aliases = ["h", "?"])]
+    #[command(description = "Показать справку по командам", aliases = ["h", "?"])]
     Help,
-    /// Start
+    #[command(description = "Начать работу с ботом")]
     Start,
-    /// Присоединиться
+    #[command(description = "Присоединиться к системе")]
     Join,
-    /// Отсоединиться
+    #[command(description = "Покинуть систему")]
     Leave,
-    /// Сведения об пользователе
+    #[command(description = "Показать информацию о себе")]
     Me,
 }
 
-fn make_keyboard() -> InlineKeyboardMarkup {
-    let mut keyboard: Vec<Vec<InlineKeyboardButton>> = vec![];
+fn make_welcome_keyboard() -> InlineKeyboardMarkup {
+    InlineKeyboardMarkup::new(vec![
+        vec![
+            InlineKeyboardButton::callback("🎯 Присоединиться", "command_join"),
+            InlineKeyboardButton::callback("❓ Помощь", "command_help"),
+        ],
+        vec![InlineKeyboardButton::callback(
+            "📌 Мой профиль",
+            "command_me",
+        )],
+    ])
+}
 
-    let debian_versions = [
-        "Buzz", "Rex", "Bo", "Hamm", "Slink", "Potato", "Woody", "Sarge", "Etch", "Lenny",
-        "Squeeze", "Wheezy", "Jessie", "Stretch", "Buster", "Bullseye",
-    ];
+async fn handle_join(
+    bot: Bot,
+    chat_id: ChatId,
+    user: &User,
+    pool: Arc<PgPool>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let username = &user.username.clone().unwrap_or_default();
+    let first_name = &user.first_name;
 
-    for versions in debian_versions.chunks(3) {
-        let row = versions
-            .iter()
-            .map(|&version| InlineKeyboardButton::callback(version.to_owned(), version.to_owned()))
-            .collect();
+    db::insert_user(&pool, chat_id.0 as i32, username, first_name)
+        .await
+        .inspect_err(|e| error!("Ошибка БД: {}", e))
+        .unwrap();
 
-        keyboard.push(row);
+    bot.send_message(chat_id, format!("Добро пожаловать, {}! 🎉", first_name))
+        .await?;
+
+    Ok(())
+}
+
+async fn handle_help(bot: Bot, chat_id: ChatId) -> Result<(), Box<dyn Error + Send + Sync>> {
+    bot.send_message(chat_id, Command::descriptions().to_string())
+        .await?;
+    Ok(())
+}
+
+async fn handle_me(
+    bot: Bot,
+    chat_id: ChatId,
+    user_id: i32,
+    pool: Arc<PgPool>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if let Some(db_user) = db::get_user(&pool, user_id).await.unwrap() {
+        let profile_text = format!(
+            "📋 Ваш профиль:\nID: {}\nUsername: @{}\nИмя: {}",
+            db_user.chat_id, db_user.username, db_user.first_name
+        );
+        bot.send_message(chat_id, profile_text).await?;
+    } else {
+        bot.send_message(
+            chat_id,
+            "Малыш, команда только для членов общества.\nИспользуй /join",
+        )
+        .await?;
     }
-
-    InlineKeyboardMarkup::new(keyboard)
+    Ok(())
 }
 
 async fn process_message(
@@ -85,31 +124,21 @@ async fn process_message(
     if let Some(text) = msg.text() {
         match BotCommands::parse(text, me.username()) {
             Ok(Command::Start) => {
-                let keyboard = make_keyboard();
-                bot.send_message(msg.chat.id, "Debian versions:")
-                    .reply_markup(keyboard)
+                let welcome_text = "👋 Добро пожаловать! Я ваш помощник.\n\n\
+                    🚀 Чтобы начать:\n\
+                    1. Используйте /join для регистрации\n\
+                    2. Посмотрите /help для списка команд\n\
+                    3. Используйте /me для вашего профиля";
+
+                bot.send_message(msg.chat.id, welcome_text)
+                    .reply_markup(make_welcome_keyboard())
                     .await?;
             }
-            Ok(Command::Help) => {
-                bot.send_message(msg.chat.id, Command::descriptions().to_string())
-                    .await?;
-            }
-            Ok(Command::Join) => {
-                let username = &user.username.unwrap_or_default();
-                let first_name = &user.first_name;
-
-                db::insert_user(&pool, msg.chat.id.0 as i32, username, first_name)
-                    .await
-                    .inspect_err(|e| error!("Ошибка БД: {}", e))
-                    .unwrap();
-
-                bot.send_message(msg.chat.id, format!("Добро пожаловать, {}! 🎉", first_name))
-                    .await
-                    .inspect_err(|e| error!("Ошибка отправки сообщения: {}", e))?;
-            }
+            Ok(Command::Help) => handle_help(bot, msg.chat.id).await?,
+            Ok(Command::Join) => handle_join(bot, msg.chat.id, &user, pool).await?,
+            Ok(Command::Me) => handle_me(bot, msg.chat.id, msg.chat.id.0 as i32, pool).await?,
             Ok(Command::Leave) => {
                 let first_name = user.first_name;
-
                 db::delete_user(&pool, msg.chat.id.0 as i32)
                     .await
                     .inspect_err(|e| error!("Ошибка БД: {}", e))
@@ -120,46 +149,6 @@ async fn process_message(
                     format!("Приходите к нам ещё, {}! 🎉", first_name),
                 )
                 .await?;
-            }
-            Ok(Command::Me) => {
-                if let Some(db_user) = db::get_user(&pool, msg.chat.id.0 as i32).await.unwrap() {
-                    bot.send_message(
-                        msg.chat.id,
-                        format!(
-                            "Ваш профиль:\nID: {}\nUsername: @{}\nИмя: {}",
-                            db_user.chat_id, db_user.username, db_user.first_name
-                        ),
-                    )
-                    .await?;
-
-                    let keyboard = InlineKeyboardMarkup::new(vec![
-                        vec![
-                            InlineKeyboardButton::new(
-                                "Кнопка 1",
-                                InlineKeyboardButtonKind::CallbackData("opt1".to_string()),
-                            ),
-                            InlineKeyboardButton::new(
-                                "Кнопка 2",
-                                InlineKeyboardButtonKind::CallbackData("opt2".to_string()),
-                            ),
-                        ],
-                        vec![InlineKeyboardButton::new(
-                            "Длинная",
-                            InlineKeyboardButtonKind::CallbackData("opt3".to_string()),
-                        )],
-                    ]);
-
-                    bot.send_message(user.id, "Выберите опцию:")
-                        .reply_markup(keyboard)
-                        .await?;
-                } else {
-                    bot.send_message(
-                        msg.chat.id,
-                        "Малыш, команда только для членов общества. Напиши 'join'",
-                    )
-                    .reply_markup(make_keyboard())
-                    .await?;
-                }
             }
             Err(_) => {
                 if let Some(user1) = db::get_user(&pool, msg.chat.id.0 as i32).await.unwrap() {
@@ -178,37 +167,24 @@ async fn process_message(
 
     Ok(())
 }
-async fn inline_query_handler(
+
+async fn callback_handler(
     bot: Bot,
-    q: InlineQuery,
+    q: CallbackQuery,
+    pool: Arc<PgPool>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let choose_debian_version = InlineQueryResultArticle::new(
-        "0",
-        "Chose debian version",
-        InputMessageContent::Text(InputMessageContentText::new("Debian versions:")),
-    )
-    .reply_markup(make_keyboard());
+    if let Some(data) = q.data {
+        let chat_id = q.message.unwrap().chat().id;
+        let user = q.from;
 
-    bot.answer_inline_query(q.id, vec![choose_debian_version.into()])
-        .await?;
-
-    Ok(())
-}
-
-async fn callback_handler(bot: Bot, q: CallbackQuery) -> Result<(), Box<dyn Error + Send + Sync>> {
-    if let Some(ref version) = q.data {
-        let text = format!("You chose: {version}");
-
-        bot.answer_callback_query(&q.id).await?;
-
-        if let Some(message) = q.regular_message() {
-            bot.edit_message_text(message.chat.id, message.id, text)
-                .await?;
-        } else if let Some(id) = q.inline_message_id {
-            bot.edit_message_text_inline(id, text).await?;
+        match data.as_str() {
+            "command_join" => handle_join(bot.clone(), chat_id, &user, pool.clone()).await?,
+            "command_help" => handle_help(bot.clone(), chat_id).await?,
+            "command_me" => handle_me(bot.clone(), chat_id, user.id.0 as i32, pool.clone()).await?,
+            _ => {}
         }
 
-        info!("You chose: {}", version);
+        bot.answer_callback_query(q.id).await?;
     }
 
     Ok(())
