@@ -13,14 +13,14 @@ pub fn create_pool(database_url: &str) -> Result<PgPool, Box<dyn std::error::Err
 pub async fn insert_user(
     pool: &PgPool,
     chat_id: i32,
-    username: String,
-    first_name: String,
+    username: &str,
+    first_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = pool.get().await?;
     client
         .execute(
             "INSERT INTO users (chat_id, name, first_name) VALUES ($1, $2, $3) 
-             ON CONFLICT (chat_id) DO NOTHING",
+             ON CONFLICT (chat_id) DO UPDATE SET name = $2, first_name = $3",
             &[&chat_id, &username, &first_name],
         )
         .await?;
