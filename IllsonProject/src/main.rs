@@ -1,30 +1,29 @@
-use axum::{
-    http::StatusCode,
-    routing::{get, post},
-    Json, Router,
-};
+use deadpool_postgres::Pool;
 use dotenvy::dotenv;
-use serde::{Deserialize, Serialize};
-use std::any::Any;
+use std::error::Error;
 use std::sync::Arc;
-use std::time::Duration;
 use std::{env, fs};
-use teloxide::types::{
-    ChatAction, InlineKeyboardButton, InlineKeyboardButtonKind, InlineKeyboardMarkup,
-    KeyboardButton, MenuButton, ReplyMarkup,
+use teloxide::types::{InlineKeyboardButtonKind, User};
+use teloxide::{
+    payloads::SendMessageSetters,
+    prelude::*,
+    types::{
+        InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle, InputMessageContent,
+        InputMessageContentText, Me,
+    },
+    utils::command::BotCommands,
 };
-use teloxide::{prelude::*, types::User};
 use tracing::{debug, error, info};
-pub type Error = Box<dyn std::error::Error + Send + Sync>;
-
+mod api;
 mod config;
 mod db;
 
+use crate::api::run_server;
 use crate::config::Config;
 use crate::db::PgPool;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .with_target(true)
@@ -51,32 +50,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     debug!("Конфигурация успешно загружена");
 
     let pool = db::create_pool(&config.database_url)
-        .inspect_err(|e| error!("Ошибка создания пула БД: {}", e))?;
+        .inspect_err(|e| error!("Ошибка создания пула БД: {}", e))
+        .unwrap();
+
     let pool = Arc::new(pool);
     info!("Пул соединений с БД создан");
 
-    run_bot(pool.clone())
-        .await
-        .inspect_err(|e| error!("Ошибка в работе бота: {}", e))?;
-    run_server(pool.clone(), config.server_address.clone())
-        .await
-        .inspect_err(|e| error!("Ошибка в работе сервера: {}", e))?;
+    let bot_handle = tokio::spawn(run_bot(pool.clone()));
+    let server_handle = tokio::spawn(run_server(pool.clone(), config.server_address.clone()));
+
+    let (bot_result, server_result) = tokio::try_join!(bot_handle, server_handle)?;
+
+    if let Err(e) = bot_result {
+        error!("Ошибка в задаче бота: {}", e);
+    }
+
+    if let Err(e) = server_result {
+        error!("Ошибка в задаче сервера: {}", e);
+    }
 
     info!("Приложение завершило работу");
     Ok(())
 }
 
-async fn run_bot(pool: Arc<PgPool>) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Инициализация бота");
-
+async fn run_bot(pool: Arc<Pool>) -> Result<(), Box<dyn Error + Send + Sync>> {
     let bot = Bot::from_env();
-    let schema = Update::filter_message()
-        .filter_map(|update: Update| update.from().cloned())
-        .endpoint(process_message)
-        .branch(Update::filter_callback_query().endpoint(handle_callback));
 
-    Dispatcher::builder(bot, schema)
-        .dependencies(dptree::deps![pool])
+    let handler = dptree::entry()
+        .branch(
+            Update::filter_message()
+                .filter_map(|update: Update| update.from().cloned())
+                .endpoint(process_message),
+        )
+        .branch(Update::filter_callback_query().endpoint(callback_handler))
+        .branch(Update::filter_inline_query().endpoint(inline_query_handler));
+
+    Dispatcher::builder(bot, handler)
+        .dependencies(dptree::deps![pool.clone()])
+        .enable_ctrlc_handler()
         .build()
         .dispatch()
         .await;
@@ -85,85 +96,97 @@ async fn run_bot(pool: Arc<PgPool>) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn run_server(pool: Arc<PgPool>, addr: String) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Запуск сервера на {}", addr);
+#[derive(BotCommands)]
+#[command(rename_rule = "lowercase")]
+enum Command {
+    /// Справка
+    #[command(aliases = ["h", "?"])]
+    Help,
+    /// Start
+    Start,
+    /// Присоединиться
+    Join,
+    /// Отсоединиться
+    Leave,
+    /// Сведения об пользователе
+    Me,
+}
 
-    let app = Router::new()
-        .route("/", get(root))
-        .route("/users", post(create_user))
-        .with_state(pool)
-        .layer(
-            tower_http::trace::TraceLayer::new_for_http()
-                .make_span_with(
-                    tower_http::trace::DefaultMakeSpan::new()
-                        .level(tracing::Level::INFO)
-                        .include_headers(true),
-                )
-                .on_response(
-                    tower_http::trace::DefaultOnResponse::new().level(tracing::Level::INFO),
-                ),
-        );
+fn make_keyboard() -> InlineKeyboardMarkup {
+    let mut keyboard: Vec<Vec<InlineKeyboardButton>> = vec![];
 
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .inspect_err(|e| error!("Ошибка привязки к {}: {}", addr, e))?;
+    let debian_versions = [
+        "Buzz", "Rex", "Bo", "Hamm", "Slink", "Potato", "Woody", "Sarge", "Etch", "Lenny",
+        "Squeeze", "Wheezy", "Jessie", "Stretch", "Buster", "Bullseye",
+    ];
 
-    info!("Сервер успешно запущен");
-    axum::serve(listener, app)
-        .await
-        .inspect_err(|e| error!("Ошибка сервера: {}", e))?;
+    for versions in debian_versions.chunks(3) {
+        let row = versions
+            .iter()
+            .map(|&version| InlineKeyboardButton::callback(version.to_owned(), version.to_owned()))
+            .collect();
 
-    info!("Сервер остановлен");
-    Ok(())
+        keyboard.push(row);
+    }
+
+    InlineKeyboardMarkup::new(keyboard)
 }
 
 async fn process_message(
     bot: Bot,
     user: User,
-    pool: Arc<PgPool>,
     msg: Message,
-) -> Result<(), Error> {
+    pool: Arc<PgPool>,
+    me: Me,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     info!("Обработка сообщения: {:?}", msg);
 
     if let Some(text) = msg.text() {
-        let command = text.trim().to_lowercase();
-        debug!("Получена команда: '{}'", command);
+        match BotCommands::parse(text, me.username()) {
+            Ok(Command::Start) => {
+                let keyboard = make_keyboard();
+                bot.send_message(msg.chat.id, "Debian versions:")
+                    .reply_markup(keyboard)
+                    .await?;
+            }
+            Ok(Command::Help) => {
+                bot.send_message(msg.chat.id, Command::descriptions().to_string())
+                    .await?;
+            }
+            Ok(Command::Join) => {
+                let username = &user.username.unwrap_or_default();
+                let first_name = &user.first_name;
 
-        match command.as_str() {
-            "join" => {
-                let username = user.username.unwrap_or_default();
-                let first_name = user.first_name;
-
-                db::insert_user(&pool, user.id.0 as i32, username, first_name.clone())
+                db::insert_user(&pool, msg.chat.id.0 as i32, username, first_name)
                     .await
                     .inspect_err(|e| error!("Ошибка БД: {}", e))
                     .unwrap();
 
-                bot.send_message(user.id, format!("Добро пожаловать, {}! 🎉", first_name))
+                bot.send_message(msg.chat.id, format!("Добро пожаловать, {}! 🎉", first_name))
                     .await
-                    .inspect_err(|e| error!("Ошибка отправки сообщения: {}", e))
-                    .unwrap();
+                    .inspect_err(|e| error!("Ошибка отправки сообщения: {}", e))?;
             }
-            "leave" => {
+            Ok(Command::Leave) => {
                 let first_name = user.first_name;
 
-                db::delete_user(&pool, user.id.0 as i32)
+                db::delete_user(&pool, msg.chat.id.0 as i32)
                     .await
                     .inspect_err(|e| error!("Ошибка БД: {}", e))
                     .unwrap();
 
-                bot.send_message(user.id, format!("Приходите к нам ещё, {}! 🎉", first_name))
-                    .await
-                    .inspect_err(|e| error!("Ошибка отправки сообщения: {}", e))
-                    .unwrap();
+                bot.send_message(
+                    msg.chat.id,
+                    format!("Приходите к нам ещё, {}! 🎉", first_name),
+                )
+                .await?;
             }
-            "me" => {
-                if let Some(user1) = db::get_user(&pool, user.id.0 as i32).await.unwrap() {
+            Ok(Command::Me) => {
+                if let Some(db_user) = db::get_user(&pool, msg.chat.id.0 as i32).await.unwrap() {
                     bot.send_message(
-                        user.id,
+                        msg.chat.id,
                         format!(
                             "Ваш профиль:\nID: {}\nUsername: @{}\nИмя: {}",
-                            user1.chat_id, user1.username, user1.first_name
+                            db_user.chat_id, db_user.username, db_user.first_name
                         ),
                     )
                     .await?;
@@ -190,71 +213,62 @@ async fn process_message(
                         .await?;
                 } else {
                     bot.send_message(
-                        user.id,
+                        msg.chat.id,
                         "Малыш, команда только для членов общества. Напиши 'join'",
                     )
+                    .reply_markup(make_keyboard())
                     .await?;
                 }
             }
-            _ => {
-                if let Some(user1) = db::get_user(&pool, user.id.0 as i32).await.unwrap() {
+            Err(_) => {
+                if let Some(user1) = db::get_user(&pool, msg.chat.id.0 as i32).await.unwrap() {
                     bot.send_message(
-                        user.id,
+                        msg.chat.id,
                         format!("Привет, {}! Чем могу помочь?", user1.first_name),
                     )
                     .await?;
                 } else {
-                    bot.send_message(user.id, "Привет, малыш! Напиши 'join' для пополнения рядов")
+                    bot.send_message(msg.chat.id, "Привет! Нажми 'Join' чтобы присоединиться")
                         .await?;
                 }
             }
         }
-    } else {
-        bot.send_message(user.id, "Пожалуйста, отправляй текстовые сообщения")
-            .await?;
     }
+
+    Ok(())
+}
+async fn inline_query_handler(
+    bot: Bot,
+    q: InlineQuery,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let choose_debian_version = InlineQueryResultArticle::new(
+        "0",
+        "Chose debian version",
+        InputMessageContent::Text(InputMessageContentText::new("Debian versions:")),
+    )
+    .reply_markup(make_keyboard());
+
+    bot.answer_inline_query(q.id, vec![choose_debian_version.into()])
+        .await?;
+
     Ok(())
 }
 
-async fn root() -> &'static str {
-    let mut tasks = Vec::new();
-    for num in 1..4 {
-        let task = sleep_time_complex(num, num);
-        tasks.push(task);
-        let task = sleep_time_complex(num, 4 - num);
-        tasks.push(task);
+async fn callback_handler(bot: Bot, q: CallbackQuery) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if let Some(ref version) = q.data {
+        let text = format!("You chose: {version}");
+
+        bot.answer_callback_query(&q.id).await?;
+
+        if let Some(message) = q.regular_message() {
+            bot.edit_message_text(message.chat.id, message.id, text)
+                .await?;
+        } else if let Some(id) = q.inline_message_id {
+            bot.edit_message_text_inline(id, text).await?;
+        }
+
+        info!("You chose: {}", version);
     }
 
-    futures::future::join_all(tasks).await;
-    "2!"
-}
-
-async fn sleep_time_complex(name: u64, secs: u64) {
-    println!("bla {} start", name);
-    sleep_time(secs).await;
-    println!("bla {name} finish {secs}",);
-}
-
-async fn create_user(Json(payload): Json<CreateUser>) -> (StatusCode, Json<User2>) {
-    let user = User2 {
-        id: 6062171111111,
-        username: payload.username,
-    };
-
-    (StatusCode::CREATED, Json(user))
-}
-
-async fn sleep_time(seconds: u64) {
-    tokio::time::sleep(Duration::from_secs(seconds)).await;
-}
-
-#[derive(Deserialize)]
-struct CreateUser {
-    username: String,
-}
-
-#[derive(Serialize)]
-struct User2 {
-    id: u64,
-    username: String,
+    Ok(())
 }
