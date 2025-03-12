@@ -59,6 +59,17 @@
             box-sizing: border-box;
         }
 
+        .message-field:focus {
+            outline: none;
+            border-color: #00bcd4;
+            box-shadow: 0 0 15px rgba(0, 188, 212, 0.3);
+        }
+
+        .message-field.error {
+            border-color: #ff6699 !important;
+            animation: shake 0.3s ease;
+        }
+
         .send-button {
             background: linear-gradient(45deg, #00bcd4, #ff6699);
             border: none;
@@ -83,6 +94,182 @@
             margin-right: 12px;
             vertical-align: middle;
         }
+
+        .send-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 188, 212, 0.3);
+        }
+
+        .send-button:active {
+            transform: translateY(0);
+            box-shadow: none;
+        }
+
+        .send-button.loading {
+            opacity: 0.7;
+            pointer-events: none;
+        }
+
+        .notification {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 1rem 2rem;
+            border-radius: 8px;
+            background: #00bcd4;
+            color: white;
+            animation: slideIn 0.3s ease;
+            display: none;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+            }
+            to {
+                transform: translateX(0);
+            }
+        }
+
+        @keyframes shake {
+            0%, 100% {
+                transform: translateX(0);
+            }
+            25% {
+                transform: translateX(-5px);
+            }
+            75% {
+                transform: translateX(5px);
+            }
+        }
+
+        .history-container {
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 16px;
+            padding: 1.5rem;
+            margin-top: 2rem;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .history-title {
+            font-family: "Poppins", sans-serif;
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: #00bcd4;
+        }
+
+        .message-item {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border-left: 4px solid;
+            transition: all 0.2s ease;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .message-item:hover {
+            transform: translateX(5px);
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .message-success {
+            border-color: #00bcd4;
+        }
+
+        .message-error {
+            border-color: #ff6699;
+        }
+
+        .message-date {
+            font-size: 0.9rem;
+            color: #888;
+            margin-bottom: 0.5rem;
+        }
+
+        .message-preview {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            font-size: 1rem;
+            line-height: 1.4;
+        }
+
+        .message-status {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            font-size: 1.2rem;
+        }
+
+        .empty-history {
+            text-align: center;
+            color: #666;
+            padding: 2rem;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: #2a2a2a;
+            padding: 2rem;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            position: relative;
+            animation: modalOpen 0.3s ease;
+        }
+
+        @keyframes modalOpen {
+            from {
+                transform: scale(0.9);
+                opacity: 0;
+            }
+            to {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0.5rem;
+        }
+
+        .modal-text {
+            white-space: pre-wrap;
+            line-height: 1.5;
+            font-size: 1.1rem;
+        }
+
+        .modal-date {
+            color: #888;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+        }
     </style>
 </head>
 <body>
@@ -95,20 +282,34 @@
         ></textarea>
     <button class="send-button" onclick="sendMessage()">Возвестить пастве</button>
 </div>
+
+<div class="container history-container">
+    <div class="history-title">История посланий</div>
+    <div id="history-list"></div>
+</div>
+
 <div class="notification" id="notification"></div>
 
+<div class="modal" id="messageModal">
+    <div class="modal-content">
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+        <div class="modal-date" id="modalDate"></div>
+        <div class="modal-text" id="modalText"></div>
+    </div>
+</div>
+
 <script>
+    let messageHistory = JSON.parse(localStorage.getItem('messageHistory')) || [];
+
     async function sendMessage() {
         const button = document.querySelector('.send-button');
         const textarea = document.querySelector('.message-field');
         const notification = document.getElementById('notification');
 
+        textarea.classList.remove('error');
+
         if (!textarea.value.trim()) {
-            textarea.style.borderColor = '#ff6699';
-            textarea.classList.add('shake');
-            setTimeout(() => {
-                textarea.classList.remove('shake');
-            }, 300);
+            textarea.classList.add('error');
             return;
         }
 
@@ -127,17 +328,30 @@
             });
 
             if (response.ok) {
+                const newMessage = {
+                    text: textarea.value,
+                    date: new Date().toLocaleString(),
+                    status: 'success'
+                };
+                addToHistory(newMessage);
+                textarea.classList.remove('error');
                 textarea.value = '';
                 showNotification('✅ Послание доставлено!', '#00bcd4');
             } else {
                 throw new Error('Ошибка отправки');
             }
         } catch (error) {
+            const errorMessage = {
+                text: textarea.value,
+                date: new Date().toLocaleString(),
+                status: 'error'
+            };
+            addToHistory(errorMessage);
             console.error('Error:', error);
             showNotification('❌ Ошибка отправки', '#ff6699');
         } finally {
             button.classList.remove('loading');
-            button.innerHTML = '📯 Возвестить пастве';
+            button.innerHTML = 'Возвестить пастве';
         }
     }
 
@@ -151,6 +365,63 @@
             notification.style.display = 'none';
         }, 3000);
     }
+
+    document.querySelector('.message-field').addEventListener('input', function () {
+        this.classList.remove('error');
+        this.style.borderColor = '';
+    });
+
+    function addToHistory(message) {
+        messageHistory.unshift(message);
+        if (messageHistory.length > 50) messageHistory.pop();
+        localStorage.setItem('messageHistory', JSON.stringify(messageHistory));
+        updateHistory();
+    }
+
+    function showFullMessage(text, date) {
+        const modal = document.getElementById('messageModal');
+        const modalText = document.getElementById('modalText');
+        const modalDate = document.getElementById('modalDate');
+
+        modalText.textContent = text;
+        modalDate.textContent = date;
+        modal.style.display = 'flex';
+    }
+
+    function closeModal() {
+        document.getElementById('messageModal').style.display = 'none';
+    }
+
+    window.onclick = function (event) {
+        const modal = document.getElementById('messageModal');
+        if (event.target === modal) {
+            closeModal();
+        }
+    }
+
+    function updateHistory() {
+        const historyList = document.getElementById('history-list');
+        historyList.innerHTML = '';
+
+        if (messageHistory.length === 0) {
+            historyList.innerHTML = '<div class="empty-history">Нет отправленных сообщений</div>';
+            return;
+        }
+
+        messageHistory.forEach(msg => {
+            const item = document.createElement('div');
+            item.className = `message-item ${msg.status === 'success' ? 'message-success' : 'message-error'}`;
+            item.innerHTML = `
+                    <div class="message-date">${msg.date}</div>
+                    <div class="message-preview">${msg.text}</div>
+                    <div class="message-status">${msg.status === 'success' ? '✓' : '✗'}</div>
+                `;
+            item.addEventListener('click', () => showFullMessage(msg.text, msg.date));
+            historyList.appendChild(item);
+        });
+    }
+
+    updateHistory();
 </script>
 </body>
 </html>
