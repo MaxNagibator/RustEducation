@@ -2,124 +2,129 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Управление трансляцией</title>
+    <meta content="width=device-width, initial-scale=1.0"
+          name="viewport">
+    <title>Админка</title>
     <style>
+        *, *::before, *::after {
+            box-sizing: border-box;
+        }
+
         body {
-            font-family: "Roboto", sans-serif;
-            max-width: 1000px;
-            margin: 0 auto;
-            padding: 20px;
-            color: #fff;
+            font-family:      "Roboto", sans-serif;
+            max-width:        1000px;
+            margin:           0 auto;
+            padding:          20px;
+            color:            #fff;
             background-color: #212121;
         }
 
         h1 {
-            font-family: "Poppins", sans-serif;
-            font-size: 2.5rem;
-            font-weight: bold;
-            position: relative;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 100%;
-            margin: 2rem 0;
-            padding: 1rem 0;
-            transition: background-position 2s ease;
-            text-align: center;
-            color: #fff;
-            background: linear-gradient(90deg, #ffcc00, #ff6699, #00bcd4, #ffcc00);
+            font-family:             "Poppins", sans-serif;
+            font-size:               2.5rem;
+            font-weight:             bold;
+            position:                relative;
+            display:                 flex;
+            align-items:             center;
+            justify-content:         center;
+            width:                   100%;
+            margin:                  2rem 0;
+            padding:                 1rem 0;
+            transition:              background-position 2s ease;
+            text-align:              center;
+            color:                   #fff;
+            background:              linear-gradient(90deg, #ffcc00, #ff6699, #00bcd4, #ffcc00);
             -webkit-background-clip: text;
-            background-size: 300% 100%;
+            background-size:         300% 100%;
             -webkit-text-fill-color: transparent;
         }
 
         .container {
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 16px;
-            padding: 2rem;
+            box-sizing:      border-box;
+            padding:         2rem;
+            border:          1px solid rgba(255, 255, 255, 0.1);
+            border-radius:   16px;
+            background:      rgba(255, 255, 255, 0.05);
+            box-shadow:      0 4px 30px rgba(0, 0, 0, 0.1);
             backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
-            box-sizing: border-box;
         }
 
         .message-field {
-            width: 100%;
-            height: 150px;
-            padding: 1rem;
-            margin: 1rem 0;
-            border: 2px solid rgba(255, 255, 255, 0.1);
+            font-size:     1.1rem;
+            box-sizing:    border-box;
+            width:         100%;
+            height:        150px;
+            margin:        1rem 0;
+            padding:       1rem;
+            resize:        vertical;
+            transition:    all 0.3s ease;
+            color:         #fff;
+            border:        2px solid rgba(255, 255, 255, 0.1);
             border-radius: 8px;
-            background: rgba(0, 0, 0, 0.2);
-            color: #fff;
-            font-size: 1.1rem;
-            resize: vertical;
-            transition: all 0.3s ease;
-            box-sizing: border-box;
+            background:    rgba(0, 0, 0, 0.2);
         }
 
         .message-field:focus {
-            outline: none;
             border-color: #00bcd4;
-            box-shadow: 0 0 15px rgba(0, 188, 212, 0.3);
+            outline:      none;
+            box-shadow:   0 0 15px rgba(0, 188, 212, 0.3);
         }
 
         .message-field.error {
+            animation:    shake 0.3s ease;
             border-color: #ff6699 !important;
-            animation: shake 0.3s ease;
         }
 
         .send-button {
-            background: linear-gradient(45deg, #00bcd4, #ff6699);
-            border: none;
-            padding: 1rem 1.5rem;
-            color: white;
-            font-weight: bold;
-            font-size: 1rem;
-            border-radius: 50px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            display: block;
-            width: 100%;
-            max-width: 350px;
-            margin: 1rem auto;
-            text-transform: uppercase;
+            font-size:      1rem;
+            font-weight:    bold;
+            display:        block;
+            width:          100%;
+            max-width:      350px;
+            margin:         1rem auto;
+            padding:        1rem 1.5rem;
+            cursor:         pointer;
+            transition:     all 0.3s ease;
             letter-spacing: 1px;
+            text-transform: uppercase;
+            color:          white;
+            border:         none;
+            border-radius:  50px;
+            background:     linear-gradient(45deg, #00bcd4, #ff6699);
         }
 
         .send-button::before {
-            content: '📯';
-            font-size: 1.4rem;
-            margin-right: 12px;
+            font-size:      1.4rem;
+            margin-right:   12px;
+            content:        "📯";
             vertical-align: middle;
         }
 
         .send-button:hover {
-            transform: translateY(-2px);
+            transform:  translateY(-2px);
             box-shadow: 0 5px 15px rgba(0, 188, 212, 0.3);
         }
 
         .send-button:active {
-            transform: translateY(0);
+            transform:  translateY(0);
             box-shadow: none;
         }
 
         .send-button.loading {
-            opacity: 0.7;
             pointer-events: none;
+            opacity:        0.7;
         }
 
         .notification {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            padding: 1rem 2rem;
+            position:      fixed;
+            right:         20px;
+            bottom:        20px;
+            display:       none;
+            padding:       1rem 2rem;
+            animation:     slideIn 0.3s ease;
+            color:         white;
             border-radius: 8px;
-            background: #00bcd4;
-            color: white;
-            animation: slideIn 0.3s ease;
-            display: none;
+            background:    #00bcd4;
         }
 
         @keyframes slideIn {
@@ -144,34 +149,37 @@
         }
 
         .history-container {
-            background: rgba(255, 255, 255, 0.03);
+            overflow-x:    hidden;
+            overflow-y:    auto;
+            max-height:    400px;
+            margin-top:    2rem;
+            padding:       1.5rem;
             border-radius: 16px;
-            padding: 1.5rem;
-            margin-top: 2rem;
-            max-height: 400px;
-            overflow-y: auto;
+            background:    rgba(255, 255, 255, 0.03);
         }
 
         .history-title {
-            font-family: "Poppins", sans-serif;
-            font-size: 1.5rem;
+            font-family:   "Poppins", sans-serif;
+            font-size:     1.5rem;
             margin-bottom: 1rem;
-            color: #00bcd4;
+            color:         #00bcd4;
         }
 
         .message-item {
-            background: rgba(0, 0, 0, 0.2);
-            border-radius: 8px;
-            padding: 1rem;
+            position:      relative;
+            box-sizing:    border-box;
+            width:         100%;
             margin-bottom: 1rem;
-            border-left: 4px solid;
-            transition: all 0.2s ease;
-            cursor: pointer;
-            position: relative;
+            padding:       1rem;
+            cursor:        pointer;
+            transition:    all 0.2s ease;
+            border-left:   4px solid;
+            border-radius: 8px;
+            background:    rgba(0, 0, 0, 0.2);
         }
 
         .message-item:hover {
-            transform: translateX(5px);
+            transform:  translateX(1px);
             background: rgba(0, 0, 0, 0.3);
         }
 
@@ -184,103 +192,102 @@
         }
 
         .message-date {
-            font-size: 0.9rem;
-            color: #888;
+            font-size:     0.9rem;
             margin-bottom: 0.5rem;
+            color:         #888;
         }
 
         .message-preview {
-            display: -webkit-box;
+            font-size:          1rem;
+            line-height:        1.4;
+            display:            -webkit-box;
+            overflow:           hidden;
+            padding-right:      10px;
+            word-break:         break-word;
+            hyphens:            auto;
             -webkit-line-clamp: 2;
             -webkit-box-orient: vertical;
-            overflow: hidden;
-            font-size: 1rem;
-            line-height: 1.4;
         }
 
         .message-status {
-            position: absolute;
-            top: 1rem;
-            right: 1rem;
             font-size: 1.2rem;
+            position:  absolute;
+            top:       1rem;
+            right:     1rem;
         }
 
         .empty-history {
+            padding:    2rem;
             text-align: center;
-            color: #666;
-            padding: 2rem;
+            color:      #666;
         }
 
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.7);
-            z-index: 1000;
+        .message-actions {
+            position:  absolute;
+            top:       1rem;
+            right:     10px;
+            display:   flex;
+            transform: translateY(-5px);
+            gap:       8px;
+        }
+
+        .action-btn {
+            display:     flex;
             align-items: center;
-            justify-content: center;
+            padding:     4px;
+            cursor:      pointer;
+            transition:  all 0.2s ease;
+            color:       #666;
+            border:      none;
+            background:  none;
         }
 
-        .modal-content {
-            background: #2a2a2a;
-            padding: 2rem;
-            border-radius: 12px;
-            width: 90%;
-            max-width: 600px;
-            max-height: 80vh;
-            overflow-y: auto;
-            position: relative;
-            animation: modalOpen 0.3s ease;
+        .action-btn:hover {
+            transform: scale(1.1);
+            color:     #fff;
         }
 
-        @keyframes modalOpen {
-            from {
-                transform: scale(0.9);
-                opacity: 0;
-            }
-            to {
-                transform: scale(1);
-                opacity: 1;
-            }
+        .delete-confirm {
+            display: none;
+            gap:     8px;
         }
 
-        .modal-close {
-            position: absolute;
-            top: 1rem;
-            right: 1rem;
-            background: none;
-            border: none;
-            color: #fff;
-            font-size: 1.5rem;
-            cursor: pointer;
-            padding: 0.5rem;
+        .confirm-delete .delete-btn {
+            display: none;
         }
 
-        .modal-text {
-            white-space: pre-wrap;
-            line-height: 1.5;
-            font-size: 1.1rem;
+        .confirm-delete .delete-confirm {
+            display: flex;
         }
 
-        .modal-date {
-            color: #888;
-            margin-bottom: 1rem;
-            font-size: 0.9rem;
+        .copy-notice {
+            font-size:     0.8rem;
+            position:      absolute;
+            bottom:        -25px;
+            left:          -50px;
+            padding:       4px 8px;
+            transition:    opacity 0.3s ease;
+            opacity:       0;
+            color:         white;
+            border-radius: 4px;
+            background:    #00bcd4;
+        }
+
+        .message-item.copied .copy-notice {
+            opacity: 1;
         }
     </style>
 </head>
 <body>
-<h1>Управление трансляцией</h1>
+<h1>Админка</h1>
 <div class="container">
-        <textarea
-                class="message-field"
-                placeholder="Введите ваше священное послание..."
-                maxlength="500"
-        ></textarea>
-    <button class="send-button" onclick="sendMessage()">Возвестить пастве</button>
+    <textarea class="message-field"
+              maxlength="500"
+              placeholder="Введите ваше священное послание...">
+    </textarea>
+    <button class="send-button"
+            onclick="sendMessage()">Возвестить пастве
+    </button>
 </div>
 
 <div class="container history-container">
@@ -288,15 +295,8 @@
     <div id="history-list"></div>
 </div>
 
-<div class="notification" id="notification"></div>
-
-<div class="modal" id="messageModal">
-    <div class="modal-content">
-        <button class="modal-close" onclick="closeModal()">&times;</button>
-        <div class="modal-date" id="modalDate"></div>
-        <div class="modal-text" id="modalText"></div>
-    </div>
-</div>
+<div class="notification"
+     id="notification"></div>
 
 <script>
     let messageHistory = JSON.parse(localStorage.getItem('messageHistory')) || [];
@@ -304,7 +304,6 @@
     async function sendMessage() {
         const button = document.querySelector('.send-button');
         const textarea = document.querySelector('.message-field');
-        const notification = document.getElementById('notification');
 
         textarea.classList.remove('error');
 
@@ -378,27 +377,6 @@
         updateHistory();
     }
 
-    function showFullMessage(text, date) {
-        const modal = document.getElementById('messageModal');
-        const modalText = document.getElementById('modalText');
-        const modalDate = document.getElementById('modalDate');
-
-        modalText.textContent = text;
-        modalDate.textContent = date;
-        modal.style.display = 'flex';
-    }
-
-    function closeModal() {
-        document.getElementById('messageModal').style.display = 'none';
-    }
-
-    window.onclick = function (event) {
-        const modal = document.getElementById('messageModal');
-        if (event.target === modal) {
-            closeModal();
-        }
-    }
-
     function updateHistory() {
         const historyList = document.getElementById('history-list');
         historyList.innerHTML = '';
@@ -408,15 +386,53 @@
             return;
         }
 
-        messageHistory.forEach(msg => {
+        messageHistory.forEach((msg, index) => {
             const item = document.createElement('div');
             item.className = `message-item ${msg.status === 'success' ? 'message-success' : 'message-error'}`;
             item.innerHTML = `
                     <div class="message-date">${msg.date}</div>
                     <div class="message-preview">${msg.text}</div>
-                    <div class="message-status">${msg.status === 'success' ? '✓' : '✗'}</div>
+                    <div class="message-actions">
+                        <div class="copy-notice">Скопировано!</div>
+                        <div class="delete-btn">
+                            <button class="action-btn delete-action" data-index="${index}">🗑️</button>
+                        </div>
+                        <div class="delete-confirm">
+                            <button class="action-btn confirm-delete-btn" data-index="${index}">✅</button>
+                            <button class="action-btn cancel-delete-btn">❌</button>
+                        </div>
+                    </div>
                 `;
-            item.addEventListener('click', () => showFullMessage(msg.text, msg.date));
+
+            item.addEventListener('click', (e) => {
+                if (!e.target.closest('.message-actions')) {
+                    const textarea = document.querySelector('.message-field');
+                    textarea.value = msg.text;
+                    textarea.focus();
+                    item.classList.add('copied');
+                    setTimeout(() => item.classList.remove('copied'), 1000);
+                }
+            });
+
+            const deleteBtn = item.querySelector('.delete-action');
+            const confirmBtn = item.querySelector('.confirm-delete-btn');
+            const cancelBtn = item.querySelector('.cancel-delete-btn');
+
+            deleteBtn.addEventListener('click', () => {
+                item.classList.add('confirm-delete');
+            });
+
+            cancelBtn.addEventListener('click', () => {
+                item.classList.remove('confirm-delete');
+            });
+
+            confirmBtn.addEventListener('click', () => {
+                messageHistory.splice(index, 1);
+                localStorage.setItem('messageHistory', JSON.stringify(messageHistory));
+                updateHistory();
+                showNotification('🗑️ Сообщение удалено', '#666');
+            });
+
             historyList.appendChild(item);
         });
     }
