@@ -1,13 +1,16 @@
 ﻿use crate::db::PgPool;
-use std::error::Error;
-
+use axum::response::Html;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
+use std::error::Error;
+use std::fs::File;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{error, info};
+use std::{fs, io};
+use tracing::{debug, error, info};
 
 pub async fn run_server(
     pool: Arc<PgPool>,
@@ -44,23 +47,21 @@ pub async fn run_server(
     Ok(())
 }
 
-async fn root() -> &'static str {
-    let mut tasks = Vec::new();
-    for num in 1..4 {
-        let task = sleep_time_complex(num, num);
-        tasks.push(task);
-        let task = sleep_time_complex(num, 4 - num);
-        tasks.push(task);
+async fn root() -> Html<String> {
+    let full_path = format!(
+        "{}\\src\\html\\index.html",
+        std::env::current_dir().unwrap().to_str().unwrap()
+    );
+    let page = fs::read_to_string(full_path);
+
+    if page.is_err() {
+        page.inspect_err(|e| error!("Ошибка чтения бла {} по пути", e));
+        let string2 = "<h1>Error loading HTML file</h1>".to_string();
+        return Html(string2);
     }
 
-    futures::future::join_all(tasks).await;
-    "2!"
-}
-
-async fn sleep_time_complex(name: u64, secs: u64) {
-    println!("bla {} start", name);
-    sleep_time(secs).await;
-    println!("bla {name} finish {secs}",);
+    let page = page.unwrap();
+    Html(page)
 }
 
 async fn create_user(Json(payload): Json<CreateUser>) -> (StatusCode, Json<UserDto>) {
