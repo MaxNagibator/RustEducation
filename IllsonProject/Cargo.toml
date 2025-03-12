@@ -2,9 +2,6 @@
 name = "IllsonProject"
 version = "0.1.0"
 edition = "2021"
-include = [
-    "src/html/**", # Папки с масками
-]
 
 [dependencies]
 axum = "0.8.1"
@@ -12,7 +9,6 @@ http = "1.2.0"
 serde = { version = "1.0.218", features = ["derive"] }
 tracing-subscriber = "0.3.19"
 tokio = { version = "1.43.0", features = ["rt", "rt-multi-thread", "macros"] }
-futures = "0.3.31"
 teloxide = { git = "https://github.com/teloxide/teloxide.git", features = ["full"] }
 tokio-postgres = "0.7.13"
 tracing = "0.1.41"
