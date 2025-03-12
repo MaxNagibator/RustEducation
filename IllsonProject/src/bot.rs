@@ -3,14 +3,10 @@ use crate::db::PgPool;
 use deadpool_postgres::Pool;
 use std::error::Error;
 use std::sync::Arc;
-use teloxide::types::{InlineKeyboardButtonKind, User};
+use teloxide::types::{MessageId, User};
 use teloxide::{
-    payloads::SendMessageSetters,
     prelude::*,
-    types::{
-        InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle, InputMessageContent,
-        InputMessageContentText, Me,
-    },
+    types::{InlineKeyboardButton, InlineKeyboardMarkup, Me},
     utils::command::BotCommands,
 };
 use tracing::{error, info};
@@ -51,25 +47,34 @@ enum Command {
     Me,
 }
 
-fn make_welcome_keyboard() -> InlineKeyboardMarkup {
-    InlineKeyboardMarkup::new(vec![
-        vec![
-            InlineKeyboardButton::callback("🎯 Присоединиться", "command_join"),
-            InlineKeyboardButton::callback("❓ Помощь", "command_help"),
-        ],
-        vec![InlineKeyboardButton::callback(
-            "📌 Мой профиль",
-            "command_me",
-        )],
-    ])
+fn make_welcome_keyboard(user_exists: bool) -> InlineKeyboardMarkup {
+    let mut rows = Vec::new();
+
+    if user_exists {
+        rows.push(vec![
+            InlineKeyboardButton::callback("📌 Мой профиль", "command_me"),
+            InlineKeyboardButton::callback("🚪 Покинуть", "command_leave"),
+        ]);
+    } else {
+        rows.push(vec![InlineKeyboardButton::callback(
+            "🎯 Присоединиться",
+            "command_join",
+        )]);
+    }
+
+    rows.push(vec![InlineKeyboardButton::callback(
+        "❓ Помощь",
+        "command_help",
+    )]);
+
+    InlineKeyboardMarkup::new(rows)
 }
 
 async fn handle_join(
-    bot: Bot,
     chat_id: ChatId,
     user: &User,
     pool: Arc<PgPool>,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> Result<String, Box<dyn Error + Send + Sync>> {
     let username = &user.username.clone().unwrap_or_default();
     let first_name = &user.first_name;
 
@@ -78,37 +83,53 @@ async fn handle_join(
         .inspect_err(|e| error!("Ошибка БД: {}", e))
         .unwrap();
 
-    bot.send_message(chat_id, format!("Добро пожаловать, {}! 🎉", first_name))
-        .await?;
-
-    Ok(())
+    Ok(format!("Добро пожаловать, {}! 🎉", first_name))
 }
 
-async fn handle_help(bot: Bot, chat_id: ChatId) -> Result<(), Box<dyn Error + Send + Sync>> {
-    bot.send_message(chat_id, Command::descriptions().to_string())
-        .await?;
-    Ok(())
+async fn handle_help() -> Result<String, Box<dyn Error + Send + Sync>> {
+    Ok(Command::descriptions().to_string())
 }
 
-async fn handle_me(
+async fn handle_me(user_id: i32, pool: Arc<PgPool>) -> String {
+    if let Some(db_user) = db::get_user(&pool, user_id).await.unwrap() {
+        format!(
+            "📋 Ваш профиль:\nID: {}\nUsername: @{}\nИмя: {}",
+            db_user.chat_id, db_user.username, db_user.first_name
+        )
+    } else {
+        "Малыш, команда только для членов общества.\nИспользуй /join".to_string()
+    }
+}
+async fn handle_leave(chat_id: ChatId, user: &User, pool: Arc<PgPool>) -> String {
+    let first_name = user.clone().first_name;
+    db::delete_user(&pool, chat_id.0 as i32)
+        .await
+        .inspect_err(|e| error!("Ошибка БД: {}", e))
+        .unwrap();
+
+    format!("Приходите к нам ещё, {}! 🎉", first_name)
+}
+
+async fn edit_or_send_message(
     bot: Bot,
     chat_id: ChatId,
     user_id: i32,
     pool: Arc<PgPool>,
+    text: String,
+    message_id: Option<MessageId>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    if let Some(db_user) = db::get_user(&pool, user_id).await.unwrap() {
-        let profile_text = format!(
-            "📋 Ваш профиль:\nID: {}\nUsername: @{}\nИмя: {}",
-            db_user.chat_id, db_user.username, db_user.first_name
-        );
-        bot.send_message(chat_id, profile_text).await?;
+    let user_exists = db::get_user(&pool, user_id).await.unwrap().is_some();
+
+    if let Some(id) = message_id {
+        bot.edit_message_text(chat_id, id, text)
+            .reply_markup(make_welcome_keyboard(user_exists))
+            .await?;
     } else {
-        bot.send_message(
-            chat_id,
-            "Малыш, команда только для членов общества.\nИспользуй /join",
-        )
-        .await?;
+        bot.send_message(chat_id, text)
+            .reply_markup(make_welcome_keyboard(user_exists))
+            .await?;
     }
+
     Ok(())
 }
 
@@ -121,48 +142,33 @@ async fn process_message(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     info!("Обработка сообщения: {:?}", msg);
 
+    let mut answer = String::new();
     if let Some(text) = msg.text() {
         match BotCommands::parse(text, me.username()) {
             Ok(Command::Start) => {
-                let welcome_text = "👋 Добро пожаловать! Я ваш помощник.\n\n\
+                answer = "👋 Добро пожаловать! Я ваш помощник.\n\n\
                     🚀 Чтобы начать:\n\
                     1. Используйте /join для регистрации\n\
                     2. Посмотрите /help для списка команд\n\
-                    3. Используйте /me для вашего профиля";
-
-                bot.send_message(msg.chat.id, welcome_text)
-                    .reply_markup(make_welcome_keyboard())
-                    .await?;
+                    3. Используйте /me для вашего профиля"
+                    .to_string();
             }
-            Ok(Command::Help) => handle_help(bot, msg.chat.id).await?,
-            Ok(Command::Join) => handle_join(bot, msg.chat.id, &user, pool).await?,
-            Ok(Command::Me) => handle_me(bot, msg.chat.id, msg.chat.id.0 as i32, pool).await?,
-            Ok(Command::Leave) => {
-                let first_name = user.first_name;
-                db::delete_user(&pool, msg.chat.id.0 as i32)
-                    .await
-                    .inspect_err(|e| error!("Ошибка БД: {}", e))
-                    .unwrap();
-
-                bot.send_message(
-                    msg.chat.id,
-                    format!("Приходите к нам ещё, {}! 🎉", first_name),
-                )
-                .await?;
-            }
+            Ok(Command::Help) => answer = handle_help().await?,
+            Ok(Command::Join) => answer = handle_join(msg.chat.id, &user, pool.clone()).await?,
+            Ok(Command::Me) => answer = handle_me(msg.chat.id.0 as i32, pool.clone()).await,
+            Ok(Command::Leave) => answer = handle_leave(msg.chat.id, &user, pool.clone()).await,
             Err(_) => {
                 if let Some(user1) = db::get_user(&pool, msg.chat.id.0 as i32).await.unwrap() {
-                    bot.send_message(
-                        msg.chat.id,
-                        format!("Привет, {}! Чем могу помочь?", user1.first_name),
-                    )
-                    .await?;
+                    answer = format!("Привет, {}! Чем могу помочь?", user1.first_name);
                 } else {
-                    bot.send_message(msg.chat.id, "Привет! Нажми 'Join' чтобы присоединиться")
-                        .await?;
+                    answer = "Привет! Нажми 'Join' чтобы присоединиться".to_string();
                 }
             }
         }
+    }
+
+    if !answer.is_empty() {
+        edit_or_send_message(bot, msg.chat.id, user.id.0 as i32, pool, answer, None).await?;
     }
 
     Ok(())
@@ -173,17 +179,29 @@ async fn callback_handler(
     q: CallbackQuery,
     pool: Arc<PgPool>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    if let Some(data) = q.data {
-        let chat_id = q.message.unwrap().chat().id;
+    if let (Some(data), Some(message)) = (q.data, q.message) {
+        let chat_id = message.chat().id;
         let user = q.from;
 
-        match data.as_str() {
-            "command_join" => handle_join(bot.clone(), chat_id, &user, pool.clone()).await?,
-            "command_help" => handle_help(bot.clone(), chat_id).await?,
-            "command_me" => handle_me(bot.clone(), chat_id, user.id.0 as i32, pool.clone()).await?,
-            _ => {}
-        }
+        let text = match data.as_str() {
+            "command_join" => handle_join(chat_id, &user, pool.clone()).await?,
+            "command_help" => handle_help().await?,
+            "command_me" => handle_me(user.id.0 as i32, pool.clone()).await,
+            "command_leave" => handle_leave(chat_id, &user, pool.clone()).await,
+            &_ => "".to_string(),
+        };
 
+        if !text.is_empty() {
+            edit_or_send_message(
+                bot.clone(),
+                chat_id,
+                user.id.0 as i32,
+                pool,
+                text,
+                Some(message.id()),
+            )
+            .await?;
+        }
         bot.answer_callback_query(q.id).await?;
     }
 
