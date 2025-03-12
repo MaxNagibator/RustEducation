@@ -1,12 +1,156 @@
-<html lang="RU">
-<title>админка</title>
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Управление трансляцией</title>
+    <style>
+        body {
+            font-family: "Roboto", sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            color: #fff;
+            background-color: #212121;
+        }
+
+        h1 {
+            font-family: "Poppins", sans-serif;
+            font-size: 2.5rem;
+            font-weight: bold;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            margin: 2rem 0;
+            padding: 1rem 0;
+            transition: background-position 2s ease;
+            text-align: center;
+            color: #fff;
+            background: linear-gradient(90deg, #ffcc00, #ff6699, #00bcd4, #ffcc00);
+            -webkit-background-clip: text;
+            background-size: 300% 100%;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 2rem;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+            box-sizing: border-box;
+        }
+
+        .message-field {
+            width: 100%;
+            height: 150px;
+            padding: 1rem;
+            margin: 1rem 0;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.2);
+            color: #fff;
+            font-size: 1.1rem;
+            resize: vertical;
+            transition: all 0.3s ease;
+            box-sizing: border-box;
+        }
+
+        .send-button {
+            background: linear-gradient(45deg, #00bcd4, #ff6699);
+            border: none;
+            padding: 1rem 1.5rem;
+            color: white;
+            font-weight: bold;
+            font-size: 1rem;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: block;
+            width: 100%;
+            max-width: 350px;
+            margin: 1rem auto;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .send-button::before {
+            content: '📯';
+            font-size: 1.4rem;
+            margin-right: 12px;
+            vertical-align: middle;
+        }
+    </style>
+</head>
 <body>
-<label>
-    <input value='123'>
-</label>
-</body>
-</html>
+<h1>Управление трансляцией</h1>
+<div class="container">
+        <textarea
+                class="message-field"
+                placeholder="Введите ваше священное послание..."
+                maxlength="500"
+        ></textarea>
+    <button class="send-button" onclick="sendMessage()">Возвестить пастве</button>
+</div>
+<div class="notification" id="notification"></div>
 
 <script>
-    button click
+    async function sendMessage() {
+        const button = document.querySelector('.send-button');
+        const textarea = document.querySelector('.message-field');
+        const notification = document.getElementById('notification');
+
+        if (!textarea.value.trim()) {
+            textarea.style.borderColor = '#ff6699';
+            textarea.classList.add('shake');
+            setTimeout(() => {
+                textarea.classList.remove('shake');
+            }, 300);
+            return;
+        }
+
+        button.classList.add('loading');
+        button.innerHTML = '⏳ Отправляем...';
+
+        try {
+            const response = await fetch('http://localhost:3000/notify', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    message: textarea.value
+                })
+            });
+
+            if (response.ok) {
+                textarea.value = '';
+                showNotification('✅ Послание доставлено!', '#00bcd4');
+            } else {
+                throw new Error('Ошибка отправки');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            showNotification('❌ Ошибка отправки', '#ff6699');
+        } finally {
+            button.classList.remove('loading');
+            button.innerHTML = '📯 Возвестить пастве';
+        }
+    }
+
+    function showNotification(text, color) {
+        const notification = document.getElementById('notification');
+        notification.textContent = text;
+        notification.style.backgroundColor = color;
+        notification.style.display = 'block';
+
+        setTimeout(() => {
+            notification.style.display = 'none';
+        }, 3000);
+    }
 </script>
+</body>
+</html>

@@ -3,14 +3,14 @@ use axum::response::Html;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use http::StatusCode;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::error::Error;
-use std::fs::File;
+use std::fs;
 use std::path::Path;
 use std::sync::Arc;
+use std::thread::sleep;
 use std::time::Duration;
-use std::{fs, io};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 pub async fn run_server(
     pool: Arc<PgPool>,
@@ -20,7 +20,7 @@ pub async fn run_server(
 
     let app = Router::new()
         .route("/", get(root))
-        .route("/users", post(create_user))
+        .route("/notify", post(notify_users))
         .with_state(pool)
         .layer(
             tower_http::trace::TraceLayer::new_for_http()
@@ -64,22 +64,13 @@ async fn root() -> Html<String> {
     Html(page)
 }
 
-async fn create_user(Json(payload): Json<CreateUser>) -> (StatusCode, Json<UserDto>) {
-    let user = UserDto {
-        id: 6062171111111,
-        username: payload.username,
-    };
-
-    (StatusCode::CREATED, Json(user))
+async fn notify_users(Json(payload): Json<NotifyRequest>) -> StatusCode {
+    info!("Возносится послание {}", payload.message);
+    sleep(Duration::from_secs(5));
+    StatusCode::OK
 }
 
 #[derive(Deserialize)]
-struct CreateUser {
-    username: String,
-}
-
-#[derive(Serialize)]
-struct UserDto {
-    id: u64,
-    username: String,
+struct NotifyRequest {
+    message: String,
 }
