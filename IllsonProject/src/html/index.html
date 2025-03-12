@@ -342,18 +342,71 @@
             margin:     2rem 0;
             background: linear-gradient(90deg, transparent, #00bcd4, transparent);
         }
+
+        .message-item.editing {
+            border-color: #ffcc00 !important;
+            background:   rgba(255, 204, 0, 0.1) !important;
+        }
+
+        .button-group {
+            display:        flex;
+            flex-direction: column;
+            margin-top:     1rem;
+            gap:            10px;
+        }
+
+        .save-edit-btn {
+            order:      1;
+            background: linear-gradient(45deg, #b69411, #bb8201);
+        }
+
+        .cancel-edit-btn {
+            order:      2;
+            background: linear-gradient(45deg, #666, #444);
+        }
+
+        .edit-buttons {
+            display: none;
+            margin:  0 auto;
+        }
+
+        .edit-button {
+            font-size:      0.75rem;
+            font-weight:    bold;
+            display:        block;
+            max-width:      200px;
+            margin:         0.5rem 0;
+            padding:        0.5rem 1rem;
+            cursor:         pointer;
+            transition:     all 0.3s ease;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color:          white;
+            border:         none;
+            border-radius:  50px;
+        }
+
+        .editing-mode .edit-buttons {
+            display:        flex;
+            flex-direction: row;
+            gap:            10px;
+        }
+
     </style>
 </head>
 <body>
 <h1>Админка</h1>
 <div class="container">
-    <textarea class="message-field"
-              maxlength="500"
-              placeholder="Введите ваше священное послание...">
-    </textarea>
-    <button class="send-button"
-            onclick="sendMessage()">Возвестить пастве
-    </button>
+        <textarea class="message-field"
+                  maxlength="500"
+                  placeholder="Введите ваше священное послание..."></textarea>
+    <div class="button-group">
+        <button class="send-button" onclick="sendMessage()">Возвестить пастве</button>
+        <div class="edit-buttons">
+            <button class="edit-button save-edit-btn" onclick="saveEdit()">💾 Сохранить</button>
+            <button class="edit-button cancel-edit-btn" onclick="cancelEdit()">❌ Отменить</button>
+        </div>
+    </div>
 </div>
 
 <div class="separator"></div>
@@ -380,6 +433,7 @@
 
 <script>
     let messageHistory = JSON.parse(localStorage.getItem('messageHistory')) || [];
+    let editingIndex = -1;
 
     messageHistory = messageHistory.map(msg => ({
         ...msg,
@@ -389,6 +443,10 @@
     async function sendMessage() {
         const button = document.querySelector('.send-button');
         const textarea = document.querySelector('.message-field');
+
+        if (editingIndex !== -1) {
+            saveEdit(false);
+        }
 
         textarea.classList.remove('error');
 
@@ -468,23 +526,28 @@
         historyList.innerHTML = '';
         favoritesList.innerHTML = '';
 
-        if (messageHistory.length === 0) {
-            historyList.innerHTML = '<div class="empty-history">Нет отправленных сообщений</div>';
-            return;
+        const favorites = messageHistory.map((msg, index) => ({msg, index})).filter(msg => msg.msg.favorite);
+        const regular = messageHistory.map((msg, index) => ({msg, index})).filter(msg => !msg.msg.favorite);
+
+        if (favorites.length > 0) {
+            favorites.forEach((msg) => {
+                const item = createMessageElement(msg.msg, msg.index, true);
+                favoritesList.appendChild(item);
+            });
+        } else {
+            favoritesList.innerHTML = '<div class="empty-history">Нет избранных сообщений</div>';
+
         }
 
-        const favorites = messageHistory.filter(msg => msg.favorite);
-        favorites.forEach((msg, index) => {
-            const item = createMessageElement(msg, index, true);
-            favoritesList.appendChild(item);
-        });
-
-        messageHistory.forEach((msg, index) => {
-            if (!msg.favorite) {
-                const item = createMessageElement(msg, index, false);
+        if (regular.length > 0) {
+            regular.forEach((msg) => {
+                const item = createMessageElement(msg.msg, msg.index, false);
                 historyList.appendChild(item);
-            }
-        });
+            });
+        } else {
+            historyList.innerHTML = '<div class="empty-history">Нет обычных сообщений</div>';
+        }
+
 
         initDragAndDrop();
     }
@@ -495,6 +558,14 @@
                          ${isFavorite ? 'draggable message-favorite' : ''}`;
         item.dataset.index = index;
         item.draggable = isFavorite;
+
+        item.addEventListener('contextmenu', (e) => {
+            if (isFavorite) {
+                e.preventDefault();
+                startEditMessage(index, msg.text);
+                return false;
+            }
+        });
 
         item.innerHTML = `
             <div class="message-date">${msg.date}</div>
@@ -540,6 +611,53 @@
         });
 
         return item;
+    }
+
+    function startEditMessage(index, text) {
+        if (editingIndex === index) {
+            cancelEdit();
+            return;
+        }
+
+        editingIndex = index;
+        document.querySelector('.message-field').value = text;
+        document.querySelector('.button-group').classList.add('editing-mode');
+
+        document.querySelectorAll('.message-item').forEach(item => {
+            item.classList.remove('editing');
+        });
+        document.querySelector(`.message-item[data-index="${index}"]`).classList.add('editing');
+    }
+
+    function cancelEdit() {
+        editingIndex = -1;
+        document.querySelector('.message-field').value = '';
+        document.querySelector('.button-group').classList.remove('editing-mode');
+        document.querySelectorAll('.message-item').forEach(item => {
+            item.classList.remove('editing');
+        });
+    }
+
+    function saveEdit(isClear = true) {
+        if (editingIndex === -1) return;
+
+        const newText = document.querySelector('.message-field').value.trim();
+        if (!newText) {
+            showNotification('❌ Текст не может быть пустым', '#ff6699');
+            return;
+        }
+
+        messageHistory[editingIndex].text = newText;
+        localStorage.setItem('messageHistory', JSON.stringify(messageHistory));
+
+        document.querySelector(`.message-item[data-index="${editingIndex}"]`).classList.remove('editing');
+        updateHistory();
+        showNotification('✅ Изменения сохранены', '#ffcc00');
+        editingIndex = -1;
+        document.querySelector('.button-group').classList.remove('editing-mode');
+        if (isClear) {
+            document.querySelector('.message-field').value = '';
+        }
     }
 
     function initDragAndDrop() {
@@ -602,6 +720,9 @@
     }
 
     function toggleFavorite(index) {
+        if (index === editingIndex) {
+            cancelEdit();
+        }
         messageHistory[index].favorite = !messageHistory[index].favorite;
         localStorage.setItem('messageHistory', JSON.stringify(messageHistory));
         updateHistory();
