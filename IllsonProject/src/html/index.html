@@ -1,12 +1,743 @@
-<html lang="RU">
-<title>админка</title>
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta content="width=device-width, initial-scale=1.0"
+          name="viewport">
+    <title>Админка</title>
+    <style>
+        *, *::before, *::after {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family:      "Roboto", sans-serif;
+            max-width:        1000px;
+            margin:           0 auto;
+            padding:          20px;
+            color:            #fff;
+            background-color: #212121;
+        }
+
+        h1 {
+            font-family:             "Poppins", sans-serif;
+            font-size:               2.5rem;
+            font-weight:             bold;
+            position:                relative;
+            display:                 flex;
+            align-items:             center;
+            justify-content:         center;
+            width:                   100%;
+            margin:                  2rem 0;
+            padding:                 1rem 0;
+            transition:              background-position 2s ease;
+            text-align:              center;
+            color:                   #fff;
+            background:              linear-gradient(90deg, #ffcc00, #ff6699, #00bcd4, #ffcc00);
+            -webkit-background-clip: text;
+            background-size:         300% 100%;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .container {
+            box-sizing:      border-box;
+            padding:         2rem;
+            border:          1px solid rgba(255, 255, 255, 0.1);
+            border-radius:   16px;
+            background:      rgba(255, 255, 255, 0.05);
+            box-shadow:      0 4px 30px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        .message-field {
+            font-size:     1.1rem;
+            box-sizing:    border-box;
+            width:         100%;
+            height:        150px;
+            margin:        1rem 0;
+            padding:       1rem;
+            resize:        vertical;
+            transition:    all 0.3s ease;
+            color:         #fff;
+            border:        2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            background:    rgba(0, 0, 0, 0.2);
+        }
+
+        .message-field:focus {
+            border-color: #00bcd4;
+            outline:      none;
+            box-shadow:   0 0 15px rgba(0, 188, 212, 0.3);
+        }
+
+        .message-field.error {
+            animation:    shake 0.3s ease;
+            border-color: #ff6699 !important;
+        }
+
+        .send-button {
+            font-size:      1rem;
+            font-weight:    bold;
+            display:        block;
+            width:          100%;
+            max-width:      350px;
+            margin:         1rem auto;
+            padding:        1rem 1.5rem;
+            cursor:         pointer;
+            transition:     all 0.3s ease;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color:          white;
+            border:         none;
+            border-radius:  50px;
+            background:     linear-gradient(45deg, #00bcd4, #ff6699);
+        }
+
+        .send-button::before {
+            font-size:      1.4rem;
+            margin-right:   12px;
+            content:        "📯";
+            vertical-align: middle;
+        }
+
+        .send-button:hover {
+            transform:  translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 188, 212, 0.3);
+        }
+
+        .send-button:active {
+            transform:  translateY(0);
+            box-shadow: none;
+        }
+
+        .send-button.loading {
+            pointer-events: none;
+            opacity:        0.7;
+        }
+
+        .notification {
+            position:      fixed;
+            right:         20px;
+            bottom:        20px;
+            display:       none;
+            padding:       1rem 2rem;
+            animation:     slideIn 0.3s ease;
+            color:         white;
+            border-radius: 8px;
+            background:    #00bcd4;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+            }
+            to {
+                transform: translateX(0);
+            }
+        }
+
+        @keyframes shake {
+            0%, 100% {
+                transform: translateX(0);
+            }
+            25% {
+                transform: translateX(-5px);
+            }
+            75% {
+                transform: translateX(5px);
+            }
+        }
+
+        .history-container {
+            overflow-x:    hidden;
+            overflow-y:    auto;
+            max-height:    400px;
+            margin-top:    2rem;
+            padding:       1.5rem;
+            border-radius: 16px;
+            background:    rgba(255, 255, 255, 0.03);
+        }
+
+        .history-title {
+            font-family:   "Poppins", sans-serif;
+            font-size:     1.5rem;
+            margin-bottom: 1rem;
+            color:         #00bcd4;
+        }
+
+        .message-item {
+            position:      relative;
+            box-sizing:    border-box;
+            width:         100%;
+            margin-bottom: 1rem;
+            padding:       1rem;
+            cursor:        pointer;
+            transition:    all 0.2s ease;
+            border-left:   4px solid;
+            border-radius: 8px;
+            background:    rgba(0, 0, 0, 0.2);
+        }
+
+        .message-item:hover {
+            transform:  translateX(1px);
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        .message-success {
+            border-color: #00bcd4;
+        }
+
+        .message-error {
+            border-color: #ff6699;
+        }
+
+        .message-date {
+            font-size:     0.9rem;
+            margin-bottom: 0.5rem;
+            color:         #888;
+        }
+
+        .message-preview {
+            font-size:          1rem;
+            line-height:        1.4;
+            display:            -webkit-box;
+            overflow:           hidden;
+            padding-right:      10px;
+            word-break:         break-word;
+            hyphens:            auto;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+
+        .message-status {
+            font-size: 1.2rem;
+            position:  absolute;
+            top:       1rem;
+            right:     1rem;
+        }
+
+        .empty-history {
+            padding:    2rem;
+            text-align: center;
+            color:      #666;
+        }
+
+        .message-actions {
+            position:  absolute;
+            top:       1rem;
+            right:     10px;
+            display:   flex;
+            transform: translateY(-5px);
+            gap:       8px;
+        }
+
+        .action-btn {
+            display:     flex;
+            align-items: center;
+            padding:     4px;
+            cursor:      pointer;
+            transition:  all 0.2s ease;
+            color:       #666;
+            border:      none;
+            background:  none;
+        }
+
+        .action-btn:hover {
+            transform: scale(1.1);
+            color:     #fff;
+        }
+
+        .delete-confirm {
+            display: none;
+            gap:     8px;
+        }
+
+        .confirm-delete .delete-btn {
+            display: none;
+        }
+
+        .confirm-delete .delete-confirm {
+            display: flex;
+        }
+
+        .copy-notice {
+            font-size:     0.8rem;
+            position:      absolute;
+            bottom:        -25px;
+            left:          -50px;
+            padding:       4px 8px;
+            transition:    opacity 0.3s ease;
+            opacity:       0;
+            color:         white;
+            border-radius: 4px;
+            background:    #00bcd4;
+        }
+
+        .message-item.copied .copy-notice {
+            opacity: 1;
+        }
+
+        .message-favorite {
+            border-right: 4px solid #ffcc00;
+        }
+
+        .favorite-btn.active {
+            color: #ffcc00;
+        }
+
+        .history-header {
+            display:         flex;
+            align-items:     center;
+            justify-content: space-between;
+            margin-bottom:   1rem;
+        }
+
+        .clear-history-btn {
+            font-size:     0.9rem;
+            padding:       0.5rem 1rem;
+            cursor:        pointer;
+            transition:    all 0.3s ease;
+            color:         white;
+            border:        none;
+            border-radius: 20px;
+            background:    linear-gradient(45deg, #ff6699, #ff4444);
+        }
+
+        .clear-history-btn:hover {
+            transform:  translateY(-1px);
+            box-shadow: 0 2px 8px rgba(255, 102, 153, 0.3);
+        }
+
+        .favorites-container {
+            margin-bottom: 2rem;
+        }
+
+        .favorites-title {
+            font-family:   "Poppins", sans-serif;
+            font-size:     1.5rem;
+            display:       flex;
+            align-items:   center;
+            margin-bottom: 1rem;
+            color:         #ffcc00;
+            gap:           10px;
+        }
+
+        .favorites-title::before {
+            font-size: 1.2em;
+            content:   "⭐";
+        }
+
+        .draggable {
+            cursor:     move;
+            transition: transform 0.2s ease;
+        }
+
+        .draggable.dragging {
+            transform: scale(0.98);
+            opacity:   0.5;
+        }
+
+        .separator {
+            height:     2px;
+            margin:     2rem 0;
+            background: linear-gradient(90deg, transparent, #00bcd4, transparent);
+        }
+
+        .message-item.editing {
+            border-color: #ffcc00 !important;
+            background:   rgba(255, 204, 0, 0.1) !important;
+        }
+
+        .button-group {
+            display:        flex;
+            flex-direction: column;
+            margin-top:     1rem;
+            gap:            10px;
+        }
+
+        .save-edit-btn {
+            order:      1;
+            background: linear-gradient(45deg, #b69411, #bb8201);
+        }
+
+        .cancel-edit-btn {
+            order:      2;
+            background: linear-gradient(45deg, #666, #444);
+        }
+
+        .edit-buttons {
+            display: none;
+            margin:  0 auto;
+        }
+
+        .edit-button {
+            font-size:      0.75rem;
+            font-weight:    bold;
+            display:        block;
+            max-width:      200px;
+            margin:         0.5rem 0;
+            padding:        0.5rem 1rem;
+            cursor:         pointer;
+            transition:     all 0.3s ease;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color:          white;
+            border:         none;
+            border-radius:  50px;
+        }
+
+        .editing-mode .edit-buttons {
+            display:        flex;
+            flex-direction: row;
+            gap:            10px;
+        }
+
+    </style>
+</head>
 <body>
-<label>
-    <input value='123'>
-</label>
-</body>
-</html>
+<h1>Админка</h1>
+<div class="container">
+        <textarea class="message-field"
+                  maxlength="500"
+                  placeholder="Введите ваше священное послание..."></textarea>
+    <div class="button-group">
+        <button class="send-button" onclick="sendMessage()">Возвестить пастве</button>
+        <div class="edit-buttons">
+            <button class="edit-button save-edit-btn" onclick="saveEdit()">💾 Сохранить</button>
+            <button class="edit-button cancel-edit-btn" onclick="cancelEdit()">❌ Отменить</button>
+        </div>
+    </div>
+</div>
+
+<div class="separator"></div>
+
+<div class="container favorites-container">
+    <div class="history-header">
+        <div class="favorites-title">Избранные послания</div>
+    </div>
+    <div id="favorites-list"></div>
+</div>
+
+<div class="separator"></div>
+
+<div class="container history-container">
+    <div class="history-header">
+        <div class="history-title">История посланий</div>
+        <button class="clear-history-btn" onclick="clearHistory()">Очистить историю</button>
+    </div>
+    <div id="history-list"></div>
+</div>
+
+<div class="notification"
+     id="notification"></div>
 
 <script>
-    button click
+    let messageHistory = JSON.parse(localStorage.getItem('messageHistory')) || [];
+    let editingIndex = -1;
+
+    messageHistory = messageHistory.map(msg => ({
+        ...msg,
+        favorite: msg.favorite || false
+    }));
+
+    async function sendMessage() {
+        const button = document.querySelector('.send-button');
+        const textarea = document.querySelector('.message-field');
+
+        if (editingIndex !== -1) {
+            saveEdit(false);
+        }
+
+        textarea.classList.remove('error');
+
+        if (!textarea.value.trim()) {
+            textarea.classList.add('error');
+            return;
+        }
+
+        button.classList.add('loading');
+        button.innerHTML = '⏳ Отправляем...';
+
+        try {
+            const response = await fetch('http://localhost:3000/notify', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    message: textarea.value
+                })
+            });
+
+            if (response.ok) {
+                const newMessage = {
+                    text: textarea.value,
+                    date: new Date().toLocaleString(),
+                    status: 'success'
+                };
+                addToHistory(newMessage);
+                textarea.classList.remove('error');
+                textarea.value = '';
+                showNotification('✅ Послание доставлено!', '#00bcd4');
+            } else {
+                throw new Error('Ошибка отправки');
+            }
+        } catch (error) {
+            const errorMessage = {
+                text: textarea.value,
+                date: new Date().toLocaleString(),
+                status: 'error'
+            };
+            addToHistory(errorMessage);
+            console.error('Error:', error);
+            showNotification('❌ Ошибка отправки', '#ff6699');
+        } finally {
+            button.classList.remove('loading');
+            button.innerHTML = 'Возвестить пастве';
+        }
+    }
+
+    function showNotification(text, color) {
+        const notification = document.getElementById('notification');
+        notification.textContent = text;
+        notification.style.backgroundColor = color;
+        notification.style.display = 'block';
+
+        setTimeout(() => {
+            notification.style.display = 'none';
+        }, 3000);
+    }
+
+    document.querySelector('.message-field').addEventListener('input', function () {
+        this.classList.remove('error');
+        this.style.borderColor = '';
+    });
+
+    function addToHistory(message) {
+        messageHistory.unshift(message);
+        if (messageHistory.length > 50) messageHistory.pop();
+        localStorage.setItem('messageHistory', JSON.stringify(messageHistory));
+        updateHistory();
+    }
+
+    function updateHistory() {
+        const historyList = document.getElementById('history-list');
+        const favoritesList = document.getElementById('favorites-list');
+        historyList.innerHTML = '';
+        favoritesList.innerHTML = '';
+
+        const favorites = messageHistory.map((msg, index) => ({msg, index})).filter(msg => msg.msg.favorite);
+        const regular = messageHistory.map((msg, index) => ({msg, index})).filter(msg => !msg.msg.favorite);
+
+        if (favorites.length > 0) {
+            favorites.forEach((msg) => {
+                const item = createMessageElement(msg.msg, msg.index, true);
+                favoritesList.appendChild(item);
+            });
+        } else {
+            favoritesList.innerHTML = '<div class="empty-history">Нет избранных сообщений</div>';
+
+        }
+
+        if (regular.length > 0) {
+            regular.forEach((msg) => {
+                const item = createMessageElement(msg.msg, msg.index, false);
+                historyList.appendChild(item);
+            });
+        } else {
+            historyList.innerHTML = '<div class="empty-history">Нет обычных сообщений</div>';
+        }
+
+
+        initDragAndDrop();
+    }
+
+    function createMessageElement(msg, index, isFavorite) {
+        const item = document.createElement('div');
+        item.className = `message-item ${msg.status === 'success' ? 'message-success' : 'message-error'}
+                         ${isFavorite ? 'draggable message-favorite' : ''}`;
+        item.dataset.index = index;
+        item.draggable = isFavorite;
+
+        item.addEventListener('contextmenu', (e) => {
+            if (isFavorite) {
+                e.preventDefault();
+                startEditMessage(index, msg.text);
+                return false;
+            }
+        });
+
+        item.innerHTML = `
+            <div class="message-date">${msg.date}</div>
+            <div class="message-preview">${msg.text}</div>
+            <div class="message-actions">
+                <div class="copy-notice">Скопировано!</div>
+                <button class="action-btn favorite-btn ${msg.favorite ? 'active' : ''}"
+                        data-index="${index}">
+                    ${msg.favorite ? '⭐' : '✩'}
+                </button>
+                <div class="delete-btn">
+                    <button class="action-btn delete-action" data-index="${index}">🗑️</button>
+                </div>
+                <div class="delete-confirm">
+                    <button class="action-btn confirm-delete-btn" data-index="${index}">✅</button>
+                    <button class="action-btn cancel-delete-btn">❌</button>
+                </div>
+            </div>
+        `;
+
+        const favoriteBtn = item.querySelector('.favorite-btn');
+        favoriteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleFavorite(index);
+        });
+
+        const deleteBtn = item.querySelector('.delete-action');
+        const confirmBtn = item.querySelector('.confirm-delete-btn');
+        const cancelBtn = item.querySelector('.cancel-delete-btn');
+
+        deleteBtn.addEventListener('click', () => item.classList.add('confirm-delete'));
+        cancelBtn.addEventListener('click', () => item.classList.remove('confirm-delete'));
+        confirmBtn.addEventListener('click', () => deleteMessage(index));
+
+        item.addEventListener('click', (e) => {
+            if (!e.target.closest('.message-actions')) {
+                const textarea = document.querySelector('.message-field');
+                textarea.value = msg.text;
+                textarea.focus();
+                item.classList.add('copied');
+                setTimeout(() => item.classList.remove('copied'), 1000);
+            }
+        });
+
+        return item;
+    }
+
+    function startEditMessage(index, text) {
+        if (editingIndex === index) {
+            cancelEdit();
+            return;
+        }
+
+        editingIndex = index;
+        document.querySelector('.message-field').value = text;
+        document.querySelector('.button-group').classList.add('editing-mode');
+
+        document.querySelectorAll('.message-item').forEach(item => {
+            item.classList.remove('editing');
+        });
+        document.querySelector(`.message-item[data-index="${index}"]`).classList.add('editing');
+    }
+
+    function cancelEdit() {
+        editingIndex = -1;
+        document.querySelector('.message-field').value = '';
+        document.querySelector('.button-group').classList.remove('editing-mode');
+        document.querySelectorAll('.message-item').forEach(item => {
+            item.classList.remove('editing');
+        });
+    }
+
+    function saveEdit(isClear = true) {
+        if (editingIndex === -1) return;
+
+        const newText = document.querySelector('.message-field').value.trim();
+        if (!newText) {
+            showNotification('❌ Текст не может быть пустым', '#ff6699');
+            return;
+        }
+
+        messageHistory[editingIndex].text = newText;
+        localStorage.setItem('messageHistory', JSON.stringify(messageHistory));
+
+        document.querySelector(`.message-item[data-index="${editingIndex}"]`).classList.remove('editing');
+        updateHistory();
+        showNotification('✅ Изменения сохранены', '#ffcc00');
+        editingIndex = -1;
+        document.querySelector('.button-group').classList.remove('editing-mode');
+        if (isClear) {
+            document.querySelector('.message-field').value = '';
+        }
+    }
+
+    function initDragAndDrop() {
+        const draggables = document.querySelectorAll('.draggable');
+        const container = document.getElementById('favorites-list');
+
+        draggables.forEach(draggable => {
+            draggable.addEventListener('dragstart', () => {
+                draggable.classList.add('dragging');
+            });
+
+            draggable.addEventListener('dragend', () => {
+                draggable.classList.remove('dragging');
+            });
+        });
+
+        container.addEventListener('dragover', e => {
+            e.preventDefault();
+            const afterElement = getDragAfterElement(container, e.clientY);
+            const draggable = document.querySelector('.dragging');
+            if (afterElement == null) {
+                container.appendChild(draggable);
+            } else {
+                container.insertBefore(draggable, afterElement);
+            }
+            updateFavoritesOrder();
+        });
+    }
+
+    function getDragAfterElement(container, y) {
+        const draggableElements = [...container.querySelectorAll('.draggable:not(.dragging)')];
+
+        return draggableElements.reduce((closest, child) => {
+            const box = child.getBoundingClientRect();
+            const offset = y - box.top - box.height / 2;
+            if (offset < 0 && offset > closest.offset) {
+                return {offset: offset, element: child};
+            } else {
+                return closest;
+            }
+        }, {offset: Number.NEGATIVE_INFINITY}).element;
+    }
+
+    function updateFavoritesOrder() {
+        const favoritesList = document.getElementById('favorites-list');
+        const newOrder = [...favoritesList.children].map(item =>
+            messageHistory[parseInt(item.dataset.index)]
+        );
+
+        const remaining = messageHistory.filter(msg => !msg.favorite);
+        messageHistory = [...newOrder, ...remaining];
+        localStorage.setItem('messageHistory', JSON.stringify(messageHistory));
+    }
+
+    function deleteMessage(index) {
+        messageHistory.splice(index, 1);
+        localStorage.setItem('messageHistory', JSON.stringify(messageHistory));
+        updateHistory();
+        showNotification('🗑️ Сообщение удалено', '#666');
+    }
+
+    function toggleFavorite(index) {
+        if (index === editingIndex) {
+            cancelEdit();
+        }
+        messageHistory[index].favorite = !messageHistory[index].favorite;
+        localStorage.setItem('messageHistory', JSON.stringify(messageHistory));
+        updateHistory();
+    }
+
+    function clearHistory() {
+        if (confirm('Очистить всю историю, кроме избранных сообщений?')) {
+            messageHistory = messageHistory.filter(msg => msg.favorite);
+            localStorage.setItem('messageHistory', JSON.stringify(messageHistory));
+            updateHistory();
+            showNotification('История очищена, избранные сохранены', '#00bcd4');
+        }
+    }
+
+    updateHistory();
 </script>
+</body>
+</html>
