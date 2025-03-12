@@ -2,3 +2,4 @@
 Education1/target
 IllsonProject/target
 *.exe
+/IllsonProject/.env
