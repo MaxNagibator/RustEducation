@@ -276,6 +276,72 @@
         .message-item.copied .copy-notice {
             opacity: 1;
         }
+
+        .message-favorite {
+            border-right: 4px solid #ffcc00;
+        }
+
+        .favorite-btn.active {
+            color: #ffcc00;
+        }
+
+        .history-header {
+            display:         flex;
+            align-items:     center;
+            justify-content: space-between;
+            margin-bottom:   1rem;
+        }
+
+        .clear-history-btn {
+            font-size:     0.9rem;
+            padding:       0.5rem 1rem;
+            cursor:        pointer;
+            transition:    all 0.3s ease;
+            color:         white;
+            border:        none;
+            border-radius: 20px;
+            background:    linear-gradient(45deg, #ff6699, #ff4444);
+        }
+
+        .clear-history-btn:hover {
+            transform:  translateY(-1px);
+            box-shadow: 0 2px 8px rgba(255, 102, 153, 0.3);
+        }
+
+        .favorites-container {
+            margin-bottom: 2rem;
+        }
+
+        .favorites-title {
+            font-family:   "Poppins", sans-serif;
+            font-size:     1.5rem;
+            display:       flex;
+            align-items:   center;
+            margin-bottom: 1rem;
+            color:         #ffcc00;
+            gap:           10px;
+        }
+
+        .favorites-title::before {
+            font-size: 1.2em;
+            content:   "⭐";
+        }
+
+        .draggable {
+            cursor:     move;
+            transition: transform 0.2s ease;
+        }
+
+        .draggable.dragging {
+            transform: scale(0.98);
+            opacity:   0.5;
+        }
+
+        .separator {
+            height:     2px;
+            margin:     2rem 0;
+            background: linear-gradient(90deg, transparent, #00bcd4, transparent);
+        }
     </style>
 </head>
 <body>
@@ -290,8 +356,22 @@
     </button>
 </div>
 
+<div class="separator"></div>
+
+<div class="container favorites-container">
+    <div class="history-header">
+        <div class="favorites-title">Избранные послания</div>
+    </div>
+    <div id="favorites-list"></div>
+</div>
+
+<div class="separator"></div>
+
 <div class="container history-container">
-    <div class="history-title">История посланий</div>
+    <div class="history-header">
+        <div class="history-title">История посланий</div>
+        <button class="clear-history-btn" onclick="clearHistory()">Очистить историю</button>
+    </div>
     <div id="history-list"></div>
 </div>
 
@@ -300,6 +380,11 @@
 
 <script>
     let messageHistory = JSON.parse(localStorage.getItem('messageHistory')) || [];
+
+    messageHistory = messageHistory.map(msg => ({
+        ...msg,
+        favorite: msg.favorite || false
+    }));
 
     async function sendMessage() {
         const button = document.querySelector('.send-button');
@@ -379,62 +464,156 @@
 
     function updateHistory() {
         const historyList = document.getElementById('history-list');
+        const favoritesList = document.getElementById('favorites-list');
         historyList.innerHTML = '';
+        favoritesList.innerHTML = '';
 
         if (messageHistory.length === 0) {
             historyList.innerHTML = '<div class="empty-history">Нет отправленных сообщений</div>';
             return;
         }
 
-        messageHistory.forEach((msg, index) => {
-            const item = document.createElement('div');
-            item.className = `message-item ${msg.status === 'success' ? 'message-success' : 'message-error'}`;
-            item.innerHTML = `
-                    <div class="message-date">${msg.date}</div>
-                    <div class="message-preview">${msg.text}</div>
-                    <div class="message-actions">
-                        <div class="copy-notice">Скопировано!</div>
-                        <div class="delete-btn">
-                            <button class="action-btn delete-action" data-index="${index}">🗑️</button>
-                        </div>
-                        <div class="delete-confirm">
-                            <button class="action-btn confirm-delete-btn" data-index="${index}">✅</button>
-                            <button class="action-btn cancel-delete-btn">❌</button>
-                        </div>
-                    </div>
-                `;
-
-            item.addEventListener('click', (e) => {
-                if (!e.target.closest('.message-actions')) {
-                    const textarea = document.querySelector('.message-field');
-                    textarea.value = msg.text;
-                    textarea.focus();
-                    item.classList.add('copied');
-                    setTimeout(() => item.classList.remove('copied'), 1000);
-                }
-            });
-
-            const deleteBtn = item.querySelector('.delete-action');
-            const confirmBtn = item.querySelector('.confirm-delete-btn');
-            const cancelBtn = item.querySelector('.cancel-delete-btn');
-
-            deleteBtn.addEventListener('click', () => {
-                item.classList.add('confirm-delete');
-            });
-
-            cancelBtn.addEventListener('click', () => {
-                item.classList.remove('confirm-delete');
-            });
-
-            confirmBtn.addEventListener('click', () => {
-                messageHistory.splice(index, 1);
-                localStorage.setItem('messageHistory', JSON.stringify(messageHistory));
-                updateHistory();
-                showNotification('🗑️ Сообщение удалено', '#666');
-            });
-
-            historyList.appendChild(item);
+        const favorites = messageHistory.filter(msg => msg.favorite);
+        favorites.forEach((msg, index) => {
+            const item = createMessageElement(msg, index, true);
+            favoritesList.appendChild(item);
         });
+
+        messageHistory.forEach((msg, index) => {
+            if (!msg.favorite) {
+                const item = createMessageElement(msg, index, false);
+                historyList.appendChild(item);
+            }
+        });
+
+        initDragAndDrop();
+    }
+
+    function createMessageElement(msg, index, isFavorite) {
+        const item = document.createElement('div');
+        item.className = `message-item ${msg.status === 'success' ? 'message-success' : 'message-error'}
+                         ${isFavorite ? 'draggable message-favorite' : ''}`;
+        item.dataset.index = index;
+        item.draggable = isFavorite;
+
+        item.innerHTML = `
+            <div class="message-date">${msg.date}</div>
+            <div class="message-preview">${msg.text}</div>
+            <div class="message-actions">
+                <div class="copy-notice">Скопировано!</div>
+                <button class="action-btn favorite-btn ${msg.favorite ? 'active' : ''}"
+                        data-index="${index}">
+                    ${msg.favorite ? '⭐' : '✩'}
+                </button>
+                <div class="delete-btn">
+                    <button class="action-btn delete-action" data-index="${index}">🗑️</button>
+                </div>
+                <div class="delete-confirm">
+                    <button class="action-btn confirm-delete-btn" data-index="${index}">✅</button>
+                    <button class="action-btn cancel-delete-btn">❌</button>
+                </div>
+            </div>
+        `;
+
+        const favoriteBtn = item.querySelector('.favorite-btn');
+        favoriteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleFavorite(index);
+        });
+
+        const deleteBtn = item.querySelector('.delete-action');
+        const confirmBtn = item.querySelector('.confirm-delete-btn');
+        const cancelBtn = item.querySelector('.cancel-delete-btn');
+
+        deleteBtn.addEventListener('click', () => item.classList.add('confirm-delete'));
+        cancelBtn.addEventListener('click', () => item.classList.remove('confirm-delete'));
+        confirmBtn.addEventListener('click', () => deleteMessage(index));
+
+        item.addEventListener('click', (e) => {
+            if (!e.target.closest('.message-actions')) {
+                const textarea = document.querySelector('.message-field');
+                textarea.value = msg.text;
+                textarea.focus();
+                item.classList.add('copied');
+                setTimeout(() => item.classList.remove('copied'), 1000);
+            }
+        });
+
+        return item;
+    }
+
+    function initDragAndDrop() {
+        const draggables = document.querySelectorAll('.draggable');
+        const container = document.getElementById('favorites-list');
+
+        draggables.forEach(draggable => {
+            draggable.addEventListener('dragstart', () => {
+                draggable.classList.add('dragging');
+            });
+
+            draggable.addEventListener('dragend', () => {
+                draggable.classList.remove('dragging');
+            });
+        });
+
+        container.addEventListener('dragover', e => {
+            e.preventDefault();
+            const afterElement = getDragAfterElement(container, e.clientY);
+            const draggable = document.querySelector('.dragging');
+            if (afterElement == null) {
+                container.appendChild(draggable);
+            } else {
+                container.insertBefore(draggable, afterElement);
+            }
+            updateFavoritesOrder();
+        });
+    }
+
+    function getDragAfterElement(container, y) {
+        const draggableElements = [...container.querySelectorAll('.draggable:not(.dragging)')];
+
+        return draggableElements.reduce((closest, child) => {
+            const box = child.getBoundingClientRect();
+            const offset = y - box.top - box.height / 2;
+            if (offset < 0 && offset > closest.offset) {
+                return {offset: offset, element: child};
+            } else {
+                return closest;
+            }
+        }, {offset: Number.NEGATIVE_INFINITY}).element;
+    }
+
+    function updateFavoritesOrder() {
+        const favoritesList = document.getElementById('favorites-list');
+        const newOrder = [...favoritesList.children].map(item =>
+            messageHistory[parseInt(item.dataset.index)]
+        );
+
+        const remaining = messageHistory.filter(msg => !msg.favorite);
+        messageHistory = [...newOrder, ...remaining];
+        localStorage.setItem('messageHistory', JSON.stringify(messageHistory));
+    }
+
+    function deleteMessage(index) {
+        messageHistory.splice(index, 1);
+        localStorage.setItem('messageHistory', JSON.stringify(messageHistory));
+        updateHistory();
+        showNotification('🗑️ Сообщение удалено', '#666');
+    }
+
+    function toggleFavorite(index) {
+        messageHistory[index].favorite = !messageHistory[index].favorite;
+        localStorage.setItem('messageHistory', JSON.stringify(messageHistory));
+        updateHistory();
+    }
+
+    function clearHistory() {
+        if (confirm('Очистить всю историю, кроме избранных сообщений?')) {
+            messageHistory = messageHistory.filter(msg => msg.favorite);
+            localStorage.setItem('messageHistory', JSON.stringify(messageHistory));
+            updateHistory();
+            showNotification('История очищена, избранные сохранены', '#00bcd4');
+        }
     }
 
     updateHistory();
