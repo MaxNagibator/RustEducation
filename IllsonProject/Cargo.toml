@@ -10,10 +10,11 @@ serde = { version = "1.0.218", features = ["derive"] }
 tracing-subscriber = "0.3.19"
 tokio = { version = "1.43.0", features = ["rt", "rt-multi-thread", "macros"] }
 teloxide = { git = "https://github.com/teloxide/teloxide.git", features = ["full"] }
-tokio-postgres = "0.7.13"
 tracing = "0.1.41"
 deadpool-postgres = "0.14.1"
 dotenvy = "0.15"
 envy = "0.4"
 tower-http = { version = "0.6.2", features = ["trace"] }
 crossbeam = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }

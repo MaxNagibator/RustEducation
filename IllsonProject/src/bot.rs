@@ -1,5 +1,6 @@
 ﻿use crate::db;
 use crate::db::PgPool;
+use chrono::Utc;
 use deadpool_postgres::Pool;
 use std::error::Error;
 use std::sync::Arc;
@@ -73,38 +74,45 @@ fn make_welcome_keyboard(user_exists: bool) -> InlineKeyboardMarkup {
 async fn handle_join(
     chat_id: ChatId,
     user: &User,
-    pool: Arc<PgPool>,
+    pool: &Arc<PgPool>,
 ) -> Result<String, Box<dyn Error + Send + Sync>> {
-    let username = &user.username.clone().unwrap_or_default();
-    let first_name = &user.first_name;
+    let db_user = db::User {
+        user_id: chat_id.0,
+        username: user
+            .username
+            .clone()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "Аноним".to_string()),
+        first_name: user.first_name.to_string(),
+        last_name: user.last_name.clone().map(|s| s.to_string()),
+        created_at: Utc::now(),
+    };
 
-    db::insert_user(&pool, chat_id.0 as i32, username, first_name)
+    db::insert_user(&pool, &db_user)
         .await
         .inspect_err(|e| error!("Ошибка БД: {}", e))
         .unwrap();
 
-    Ok(format!("Добро пожаловать, {}! 🎉", first_name))
+    Ok(format!("Добро пожаловать, {}! 🎉", db_user.first_name))
 }
 
 async fn handle_help() -> Result<String, Box<dyn Error + Send + Sync>> {
     Ok(Command::descriptions().to_string())
 }
 
-async fn handle_me(user_id: i32, pool: Arc<PgPool>) -> String {
+async fn handle_me(user_id: i64, pool: &Arc<PgPool>) -> String {
     if let Some(db_user) = db::get_user(&pool, user_id).await.unwrap() {
         format!(
             "📋 Ваш профиль:\nID: {}\nUsername: @{}\nИмя: {}",
-            db_user.chat_id,
-            db_user.username.unwrap(),
-            db_user.first_name.unwrap()
+            db_user.user_id, db_user.username, db_user.first_name
         )
     } else {
         "Малыш, команда только для членов общества.\nИспользуй /join".to_string()
     }
 }
-async fn handle_leave(chat_id: ChatId, user: &User, pool: Arc<PgPool>) -> String {
+async fn handle_leave(chat_id: ChatId, user: &User, pool: &Arc<PgPool>) -> String {
     let first_name = user.clone().first_name;
-    db::delete_user(&pool, chat_id.0 as i32)
+    db::delete_user(&pool, chat_id.0)
         .await
         .inspect_err(|e| error!("Ошибка БД: {}", e))
         .unwrap();
@@ -115,12 +123,12 @@ async fn handle_leave(chat_id: ChatId, user: &User, pool: Arc<PgPool>) -> String
 async fn edit_or_send_message(
     bot: Bot,
     chat_id: ChatId,
-    user_id: i32,
+    user_id: i64,
     pool: Arc<PgPool>,
     text: String,
     message_id: Option<MessageId>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let user_exists = db::get_user(&pool, user_id).await.unwrap().is_some();
+    let user_exists = db::exists_user(&pool, user_id).await.unwrap();
 
     if let Some(id) = message_id {
         bot.edit_message_text(chat_id, id, text)
@@ -156,12 +164,12 @@ async fn process_message(
                     .to_string();
             }
             Ok(Command::Help) => answer = handle_help().await?,
-            Ok(Command::Join) => answer = handle_join(msg.chat.id, &user, pool.clone()).await?,
-            Ok(Command::Me) => answer = handle_me(msg.chat.id.0 as i32, pool.clone()).await,
-            Ok(Command::Leave) => answer = handle_leave(msg.chat.id, &user, pool.clone()).await,
+            Ok(Command::Join) => answer = handle_join(msg.chat.id, &user, &pool).await?,
+            Ok(Command::Me) => answer = handle_me(msg.chat.id.0, &pool).await,
+            Ok(Command::Leave) => answer = handle_leave(msg.chat.id, &user, &pool).await,
             Err(_) => {
-                if let Some(user1) = db::get_user(&pool, msg.chat.id.0 as i32).await.unwrap() {
-                    answer = format!("Привет, {}! Чем могу помочь?", user1.first_name.unwrap());
+                if let Some(db_user) = db::get_user(&pool, msg.chat.id.0).await.unwrap() {
+                    answer = format!("Привет, {}! Чем могу помочь?", db_user.first_name);
                 } else {
                     answer = "Привет! Нажми 'Join' чтобы присоединиться".to_string();
                 }
@@ -170,7 +178,7 @@ async fn process_message(
     }
 
     if !answer.is_empty() {
-        edit_or_send_message(bot, msg.chat.id, user.id.0 as i32, pool, answer, None).await?;
+        edit_or_send_message(bot, msg.chat.id, user.id.0 as i64, pool, answer, None).await?;
     }
 
     Ok(())
@@ -186,10 +194,10 @@ async fn callback_handler(
         let user = q.from;
 
         let text = match data.as_str() {
-            "command_join" => handle_join(chat_id, &user, pool.clone()).await?,
+            "command_join" => handle_join(chat_id, &user, &pool).await?,
             "command_help" => handle_help().await?,
-            "command_me" => handle_me(user.id.0 as i32, pool.clone()).await,
-            "command_leave" => handle_leave(chat_id, &user, pool.clone()).await,
+            "command_me" => handle_me(user.id.0 as i64, &pool).await,
+            "command_leave" => handle_leave(chat_id, &user, &pool).await,
             &_ => "".to_string(),
         };
 
@@ -197,7 +205,7 @@ async fn callback_handler(
             edit_or_send_message(
                 bot.clone(),
                 chat_id,
-                user.id.0 as i32,
+                user.id.0 as i64,
                 pool,
                 text,
                 Some(message.id()),

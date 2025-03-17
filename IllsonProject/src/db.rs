@@ -1,6 +1,7 @@
-﻿use deadpool_postgres::{Manager, Pool, Runtime};
+﻿use chrono::{DateTime, Utc};
+use deadpool_postgres::{Manager, Pool, Runtime};
 use std::str::FromStr;
-use tokio_postgres::NoTls;
+use tokio_postgres::{NoTls, Row};
 
 pub type PgPool = Pool;
 
@@ -10,77 +11,93 @@ pub fn create_pool(database_url: &str) -> Result<PgPool, Box<dyn std::error::Err
     Ok(Pool::builder(manager).runtime(Runtime::Tokio1).build()?)
 }
 
-pub async fn insert_user(
-    pool: &PgPool,
-    chat_id: i32,
-    username: &str,
-    first_name: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+#[derive(Debug, Clone)]
+pub struct User {
+    pub user_id: i64,
+    pub username: String,
+    pub first_name: String,
+    pub last_name: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<Row> for User {
+    fn from(row: Row) -> Self {
+        User {
+            user_id: row.get("user_id"),
+            username: row.get("username"),
+            first_name: row.get("first_name"),
+            last_name: row.get("last_name"),
+            created_at: row.get("created_at"),
+        }
+    }
+}
+
+pub async fn insert_user(pool: &PgPool, user: &User) -> Result<(), Box<dyn std::error::Error>> {
     let client = pool.get().await?;
+    let stmt = client
+        .prepare(
+            "INSERT INTO users (user_id, username, first_name, last_name) 
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id) DO UPDATE SET
+             username = EXCLUDED.username,
+             first_name = EXCLUDED.first_name,
+             last_name = EXCLUDED.last_name",
+        )
+        .await?;
+
     client
         .execute(
-            "INSERT INTO users (chat_id, name, first_name) VALUES ($1, $2, $3) 
-             ON CONFLICT (chat_id) DO UPDATE SET name = $2, first_name = $3",
-            &[&chat_id, &username, &first_name],
+            &stmt,
+            &[
+                &user.user_id,
+                &user.username,
+                &user.first_name,
+                &user.last_name,
+            ],
         )
         .await?;
+
     Ok(())
 }
-pub async fn delete_user(pool: &PgPool, chat_id: i32) -> Result<(), Box<dyn std::error::Error>> {
+
+pub async fn delete_user(pool: &PgPool, user_id: i64) -> Result<(), Box<dyn std::error::Error>> {
     let client = pool.get().await?;
-    client
-        .execute("DELETE FROM users WHERE chat_id = $1", &[&chat_id])
+    let stmt = client
+        .prepare("DELETE FROM users WHERE user_id = $1")
         .await?;
+
+    client.execute(&stmt, &[&user_id]).await?;
     Ok(())
 }
 
-#[derive(Debug)]
-pub struct UserInfo {
-    pub chat_id: i32,
-    pub username: Option<String>,
-    pub first_name: Option<String>,
+pub async fn exists_user(pool: &PgPool, user_id: i64) -> Result<bool, Box<dyn std::error::Error>> {
+    let client = pool.get().await?;
+    let stmt = client
+        .prepare("SELECT EXISTS(SELECT 1 FROM users WHERE user_id = $1)")
+        .await?;
+
+    let exists: bool = client.query_one(&stmt, &[&user_id]).await?.get(0);
+
+    Ok(exists)
 }
 
-/*CREATE TABLE IF NOT EXISTS public.users
-(
-chat_id integer NOT NULL,
-name text COLLATE pg_catalog."default",
-first_name text COLLATE pg_catalog."default",
-CONSTRAINT users_pkey PRIMARY KEY (chat_id)
-)*/
 pub async fn get_user(
     pool: &PgPool,
-    chat_id: i32,
-) -> Result<Option<UserInfo>, Box<dyn std::error::Error>> {
+    user_id: i64,
+) -> Result<Option<User>, Box<dyn std::error::Error>> {
     let client = pool.get().await?;
-    let row = client
-        .query_opt(
-            "SELECT chat_id, name, first_name FROM users WHERE chat_id = $1",
-            &[&chat_id],
-        )
+    let stmt = client
+        .prepare("SELECT * FROM users WHERE user_id = $1")
         .await?;
 
-    Ok(row.map(|r| UserInfo {
-        chat_id: r.get(0),
-        username: r.get(1),
-        first_name: r.get(2),
-    }))
+    let row = client.query_opt(&stmt, &[&user_id]).await?;
+    Ok(row.map(User::from))
 }
 
-pub async fn get_users(pool: &PgPool) -> Result<Vec<UserInfo>, Box<dyn std::error::Error>> {
+pub async fn get_users(pool: &PgPool) -> Result<Vec<User>, Box<dyn std::error::Error>> {
     let client = pool.get().await?;
-    let rows = client
-        .query("SELECT chat_id, name, first_name FROM users", &[])
-        .await?;
+    let stmt = client.prepare("SELECT * FROM users").await?;
 
-    let mut users = Vec::new();
-    for row in rows {
-        users.push(UserInfo {
-            chat_id: row.get(0),
-            username: row.get(1),
-            first_name: row.get(2),
-        });
-    }
-
-    Ok(users)
+    let rows = client.query(&stmt, &[]).await?;
+    Ok(rows.into_iter().map(User::from).collect())
 }
