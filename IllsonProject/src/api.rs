@@ -3,24 +3,24 @@ use axum::response::Html;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use http::StatusCode;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::error::Error;
-use std::fs::File;
+use std::fs;
 use std::path::Path;
 use std::sync::Arc;
+use std::thread::sleep;
 use std::time::Duration;
-use std::{fs, io};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 pub async fn run_server(
     pool: Arc<PgPool>,
     addr: String,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    info!("Запуск сервера на {}", addr);
+    info!("Запуск сервера на http://{}/", addr);
 
     let app = Router::new()
         .route("/", get(root))
-        .route("/users", post(create_user))
+        .route("/notify", post(notify_users))
         .with_state(pool)
         .layer(
             tower_http::trace::TraceLayer::new_for_http()
@@ -48,42 +48,29 @@ pub async fn run_server(
 }
 
 async fn root() -> Html<String> {
-    let full_path = format!(
-        "{}\\src\\html\\index.html",
-        std::env::current_dir().unwrap().to_str().unwrap()
-    );
-    let page = fs::read_to_string(full_path);
+    let file_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("html")
+        .join("index.html");
 
+    let page = fs::read_to_string(&file_path);
     if page.is_err() {
-        page.inspect_err(|e| error!("Ошибка чтения бла {} по пути", e));
-        let string2 = "<h1>Error loading HTML file</h1>".to_string();
-        return Html(string2);
+        let _ =
+            page.inspect_err(|e| error!("Ошибка чтения по пути {}: {}", file_path.display(), e));
+        return Html("<h1>Error loading HTML file</h1>".to_string());
     }
 
     let page = page.unwrap();
     Html(page)
 }
 
-async fn create_user(Json(payload): Json<CreateUser>) -> (StatusCode, Json<UserDto>) {
-    let user = UserDto {
-        id: 6062171111111,
-        username: payload.username,
-    };
-
-    (StatusCode::CREATED, Json(user))
-}
-
-async fn sleep_time(seconds: u64) {
-    tokio::time::sleep(Duration::from_secs(seconds)).await;
+async fn notify_users(Json(payload): Json<NotifyRequest>) -> StatusCode {
+    info!("Возносится послание {}", payload.message);
+    sleep(Duration::from_secs(5));
+    StatusCode::OK
 }
 
 #[derive(Deserialize)]
-struct CreateUser {
-    username: String,
-}
-
-#[derive(Serialize)]
-struct UserDto {
-    id: u64,
-    username: String,
+struct NotifyRequest {
+    message: String,
 }
