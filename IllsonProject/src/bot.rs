@@ -94,7 +94,9 @@ async fn handle_me(user_id: i32, pool: Arc<PgPool>) -> String {
     if let Some(db_user) = db::get_user(&pool, user_id).await.unwrap() {
         format!(
             "📋 Ваш профиль:\nID: {}\nUsername: @{}\nИмя: {}",
-            db_user.chat_id, db_user.username, db_user.first_name
+            db_user.chat_id,
+            db_user.username.unwrap(),
+            db_user.first_name.unwrap()
         )
     } else {
         "Малыш, команда только для членов общества.\nИспользуй /join".to_string()
@@ -159,7 +161,7 @@ async fn process_message(
             Ok(Command::Leave) => answer = handle_leave(msg.chat.id, &user, pool.clone()).await,
             Err(_) => {
                 if let Some(user1) = db::get_user(&pool, msg.chat.id.0 as i32).await.unwrap() {
-                    answer = format!("Привет, {}! Чем могу помочь?", user1.first_name);
+                    answer = format!("Привет, {}! Чем могу помочь?", user1.first_name.unwrap());
                 } else {
                     answer = "Привет! Нажми 'Join' чтобы присоединиться".to_string();
                 }

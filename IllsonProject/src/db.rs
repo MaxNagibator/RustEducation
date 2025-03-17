@@ -37,10 +37,17 @@ pub async fn delete_user(pool: &PgPool, chat_id: i32) -> Result<(), Box<dyn std:
 #[derive(Debug)]
 pub struct UserInfo {
     pub chat_id: i32,
-    pub username: String,
-    pub first_name: String,
+    pub username: Option<String>,
+    pub first_name: Option<String>,
 }
 
+/*CREATE TABLE IF NOT EXISTS public.users
+(
+chat_id integer NOT NULL,
+name text COLLATE pg_catalog."default",
+first_name text COLLATE pg_catalog."default",
+CONSTRAINT users_pkey PRIMARY KEY (chat_id)
+)*/
 pub async fn get_user(
     pool: &PgPool,
     chat_id: i32,
@@ -58,4 +65,22 @@ pub async fn get_user(
         username: r.get(1),
         first_name: r.get(2),
     }))
+}
+
+pub async fn get_users(pool: &PgPool) -> Result<Vec<UserInfo>, Box<dyn std::error::Error>> {
+    let client = pool.get().await?;
+    let rows = client
+        .query("SELECT chat_id, name, first_name FROM users", &[])
+        .await?;
+
+    let mut users = Vec::new();
+    for row in rows {
+        users.push(UserInfo {
+            chat_id: row.get(0),
+            username: row.get(1),
+            first_name: row.get(2),
+        });
+    }
+
+    Ok(users)
 }

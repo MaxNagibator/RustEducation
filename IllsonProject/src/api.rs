@@ -1,4 +1,6 @@
-﻿use crate::db::PgPool;
+﻿use crate::db;
+use crate::db::PgPool;
+use axum::extract::State;
 use axum::response::Html;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -8,9 +10,16 @@ use std::error::Error;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
-use std::thread::sleep;
-use std::time::Duration;
+use teloxide::prelude::ChatId;
+use teloxide::requests::Requester;
+use teloxide::Bot;
 use tracing::{error, info};
+
+#[derive(Clone)]
+struct AppState {
+    pool: Arc<PgPool>,
+    bot: Bot,
+}
 
 pub async fn run_server(
     pool: Arc<PgPool>,
@@ -18,10 +27,17 @@ pub async fn run_server(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     info!("Запуск сервера на http://{}/", addr);
 
+    let bot = Bot::from_env();
+
+    let state = AppState {
+        pool: pool.clone(),
+        bot,
+    };
+
     let app = Router::new()
         .route("/", get(root))
         .route("/notify", post(notify_users))
-        .with_state(pool)
+        .with_state(state)
         .layer(
             tower_http::trace::TraceLayer::new_for_http()
                 .make_span_with(
@@ -64,9 +80,26 @@ async fn root() -> Html<String> {
     Html(page)
 }
 
-async fn notify_users(Json(payload): Json<NotifyRequest>) -> StatusCode {
-    info!("Возносится послание {}", payload.message);
-    sleep(Duration::from_secs(5));
+async fn notify_users(
+    State(state): State<AppState>,
+    Json(payload): Json<NotifyRequest>,
+) -> StatusCode {
+    let users = db::get_users(&state.pool)
+        .await
+        .inspect_err(|e| error!("Ошибка БД: {}", e))
+        .unwrap();
+
+    for user in users {
+        // todo try catch
+        // todo username first_name empty
+        let chat_id = ChatId(user.chat_id as i64);
+        let text = payload
+            .message
+            .to_string()
+            .replace("<first_name>", user.first_name.unwrap().as_str())
+            .replace("<username>", user.username.unwrap().as_str());
+        state.bot.send_message(chat_id, text).await.unwrap();
+    }
     StatusCode::OK
 }
 
