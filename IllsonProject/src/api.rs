@@ -27,11 +27,9 @@ pub async fn run_server(
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     info!("Запуск сервера на http://{}/", addr);
 
-    let bot = Bot::from_env();
-
     let state = AppState {
         pool: pool.clone(),
-        bot,
+        bot: Bot::from_env(),
     };
 
     let app = Router::new()
@@ -84,25 +82,30 @@ async fn notify_users(
     State(state): State<AppState>,
     Json(payload): Json<NotifyRequest>,
 ) -> StatusCode {
-    let users = db::get_users(&state.pool)
-        .await
-        .inspect_err(|e| error!("Ошибка БД: {}", e))
-        .unwrap();
+    let users = match db::get_users(&state.pool).await {
+        Ok(users) => users,
+        Err(e) => {
+            error!("Ошибка БД: {}", e);
+            return StatusCode::BAD_REQUEST;
+        }
+    };
 
     for user in users {
-        // todo try catch
-        // todo username first_name empty
-        let chat_id = ChatId(user.chat_id as i64);
         let text = payload
             .message
-            .to_string()
-            .replace("<first_name>", user.first_name.unwrap().as_str())
-            .replace("<username>", user.username.unwrap().as_str());
-        state.bot.send_message(chat_id, text).await.unwrap();
+            .replace("<first_name>", user.first_name.as_str())
+            .replace("<username>", user.username.as_str());
+
+        if let Err(e) = state.bot.send_message(ChatId(user.user_id), text).await {
+            error!(
+                "Не удалось отправить сообщение пользователю {}: {}",
+                user.user_id, e
+            );
+        }
     }
+
     StatusCode::OK
 }
-
 #[derive(Deserialize)]
 struct NotifyRequest {
     message: String,
