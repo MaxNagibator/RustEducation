@@ -82,24 +82,30 @@ async fn notify_users(
     State(state): State<AppState>,
     Json(payload): Json<NotifyRequest>,
 ) -> StatusCode {
-    let users = db::get_users(&state.pool)
-        .await
-        .inspect_err(|e| error!("Ошибка БД: {}", e))
-        .unwrap();
+    let users = match db::get_users(&state.pool).await {
+        Ok(users) => users,
+        Err(e) => {
+            error!("Ошибка БД: {}", e);
+            return StatusCode::BAD_REQUEST;
+        }
+    };
 
     for user in users {
-        // todo try catch
-        // todo username first_name empty
-        let chat_id = ChatId(user.user_id);
         let text = payload
             .message
             .replace("<first_name>", user.first_name.as_str())
             .replace("<username>", user.username.as_str());
-        state.bot.send_message(chat_id, text).await.unwrap();
+
+        if let Err(e) = state.bot.send_message(ChatId(user.user_id), text).await {
+            error!(
+                "Не удалось отправить сообщение пользователю {}: {}",
+                user.user_id, e
+            );
+        }
     }
+
     StatusCode::OK
 }
-
 #[derive(Deserialize)]
 struct NotifyRequest {
     message: String,

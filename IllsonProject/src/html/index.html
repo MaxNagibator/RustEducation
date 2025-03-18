@@ -567,9 +567,12 @@
             }
         });
 
+        const safeDate = escapeHtml(msg.date);
+        const safeText = escapeHtml(msg.text);
+
         item.innerHTML = `
-            <div class="message-date">${msg.date}</div>
-            <div class="message-preview">${msg.text}</div>
+            <div class="message-date">${safeDate}</div>
+            <div class="message-preview">${safeText}</div>
             <div class="message-actions">
                 <div class="copy-notice">Скопировано!</div>
                 <button class="action-btn favorite-btn ${msg.favorite ? 'active' : ''}"
@@ -735,6 +738,18 @@
             updateHistory();
             showNotification('История очищена, избранные сохранены', '#00bcd4');
         }
+    }
+
+    function escapeHtml(unsafe) {
+        return unsafe.replace(/[&<>"']/g, function (match) {
+            return {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            }[match];
+        });
     }
 
     updateHistory();
