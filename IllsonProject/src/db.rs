@@ -18,6 +18,7 @@ pub struct User {
     pub first_name: String,
     pub last_name: Option<String>,
     pub created_at: DateTime<Utc>,
+    pub subscribes: Option<i32>,
 }
 
 impl From<Row> for User {
@@ -28,6 +29,7 @@ impl From<Row> for User {
             first_name: row.get("first_name"),
             last_name: row.get("last_name"),
             created_at: row.get("created_at"),
+            subscribes: row.get("subscribes"),
         }
     }
 }
@@ -36,12 +38,13 @@ pub async fn insert_user(pool: &PgPool, user: &User) -> Result<(), Box<dyn std::
     let client = pool.get().await?;
     let stmt = client
         .prepare(
-            "INSERT INTO users (user_id, username, first_name, last_name) 
-         VALUES ($1, $2, $3, $4)
+            "INSERT INTO users (user_id, username, first_name, last_name, subscribes) 
+         VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (user_id) DO UPDATE SET
              username = EXCLUDED.username,
              first_name = EXCLUDED.first_name,
-             last_name = EXCLUDED.last_name",
+             last_name = EXCLUDED.last_name,
+             subscribes = EXCLUDED.subscribes",
         )
         .await?;
 
@@ -53,6 +56,7 @@ pub async fn insert_user(pool: &PgPool, user: &User) -> Result<(), Box<dyn std::
                 &user.username,
                 &user.first_name,
                 &user.last_name,
+                &user.subscribes,
             ],
         )
         .await?;

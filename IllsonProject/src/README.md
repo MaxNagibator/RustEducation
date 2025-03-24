@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS users
     username   VARCHAR(64)              NOT NULL,
     first_name VARCHAR(255)             NOT NULL,
     last_name  VARCHAR(255),
+    subscribes integer NULL,
 
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );

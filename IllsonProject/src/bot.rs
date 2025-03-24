@@ -48,14 +48,53 @@ enum Command {
     Me,
 }
 
-fn make_welcome_keyboard(user_exists: bool) -> InlineKeyboardMarkup {
+fn make_welcome_keyboard(user: Option<db::User>) -> InlineKeyboardMarkup {
     let mut rows = Vec::new();
 
-    if user_exists {
+    if user.is_some() {
+        let obj = user.unwrap();
+        let subscribes = obj.subscribes.unwrap_or(0);
+        let subscribes_string = i32_to_bit_string(subscribes);
+        let mut subscribes_chars = subscribes_string.chars();
+
+        let is_test4 = subscribes_chars.nth(28) == Some('1');
+        let is_test3 = subscribes_chars.nth(0) == Some('1');
+        let is_memasi = subscribes_chars.nth(0) == Some('1');
+        let is_stream = subscribes_chars.nth(0) == Some('1');
+
+        let test: InlineKeyboardButton;
+        let test2: InlineKeyboardButton;
+        let test3: InlineKeyboardButton;
+        let test4: InlineKeyboardButton;
+        // todo сделать через цикл по массиву, туды сюды
+        // todo хуёвый код, 31 и текст куданить в константы, массив айди нейм
+        if is_stream {
+            test = InlineKeyboardButton::callback("Выкл нап.стримов", "command_enable_0_31");
+        } else {
+            test = InlineKeyboardButton::callback("Вкл нап.стримов", "command_enable_1_31");
+        }
+        if is_memasi {
+            test2 = InlineKeyboardButton::callback("Выкл мемасы", "command_enable_0_30");
+        } else {
+            test2 = InlineKeyboardButton::callback("Вкл мемасы", "command_enable_1_30");
+        }
+        if is_test3 {
+            test3 = InlineKeyboardButton::callback("Выкл 3тест", "command_enable_0_29");
+        } else {
+            test3 = InlineKeyboardButton::callback("Вкл 3тест", "command_enable_1_29");
+        }
+        if is_test4 {
+            test4 = InlineKeyboardButton::callback("Выкл 4тест", "command_enable_0_28");
+        } else {
+            test4 = InlineKeyboardButton::callback("Вкл 4тест", "command_enable_1_28");
+        }
+
         rows.push(vec![
             InlineKeyboardButton::callback("📌 Мой профиль", "command_me"),
             InlineKeyboardButton::callback("🚪 Покинуть", "command_leave"),
         ]);
+        rows.push(vec![test, test2]);
+        rows.push(vec![test3, test4]);
     } else {
         rows.push(vec![InlineKeyboardButton::callback(
             "🎯 Присоединиться",
@@ -69,6 +108,37 @@ fn make_welcome_keyboard(user_exists: bool) -> InlineKeyboardMarkup {
     )]);
 
     InlineKeyboardMarkup::new(rows)
+}
+
+fn i32_to_bit_string(n: i32) -> String {
+    (0..32)
+        .rev()
+        .map(|i| if (n >> i) & 1 == 1 { '1' } else { '0' })
+        .collect()
+}
+
+fn bit_string_to_i32(s: &str) -> Option<i32> {
+    if s.len() != 32 {
+        return None;
+    }
+
+    let mut result: i32 = 0;
+
+    for (i, c) in s.chars().enumerate() {
+        match c {
+            '0' => {}
+            '1' => {
+                if i == 0 {
+                    // MSB is set - negative number
+                    result = !0 ^ ((1 << (31 - i)) - 1);
+                }
+                result |= 1 << (31 - i);
+            }
+            _ => return None,
+        }
+    }
+
+    Some(result)
 }
 
 async fn handle_join(
@@ -86,6 +156,7 @@ async fn handle_join(
         first_name: user.first_name.to_string(),
         last_name: user.last_name.clone().map(|s| s.to_string()),
         created_at: Utc::now(),
+        subscribes: Some(0),
     };
 
     db::insert_user(&pool, &db_user)
@@ -128,15 +199,16 @@ async fn edit_or_send_message(
     text: String,
     message_id: Option<MessageId>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let user_exists = db::exists_user(&pool, user_id).await.unwrap();
+    //let user_exists = db::exists_user(&pool, user_id).await.unwrap();
+    let user = db::get_user(&pool, user_id).await.unwrap();
 
     if let Some(id) = message_id {
         bot.edit_message_text(chat_id, id, text)
-            .reply_markup(make_welcome_keyboard(user_exists))
+            .reply_markup(make_welcome_keyboard(user))
             .await?;
     } else {
         bot.send_message(chat_id, text)
-            .reply_markup(make_welcome_keyboard(user_exists))
+            .reply_markup(make_welcome_keyboard(user))
             .await?;
     }
 
@@ -184,6 +256,13 @@ async fn process_message(
     Ok(())
 }
 
+fn replace_char_at_index(s: &str, index: usize, new_char: char) -> String {
+    s.chars()
+        .enumerate()
+        .map(|(i, c)| if i == index { new_char } else { c })
+        .collect()
+}
+
 async fn callback_handler(
     bot: Bot,
     q: CallbackQuery,
@@ -192,6 +271,38 @@ async fn callback_handler(
     if let (Some(data), Some(message)) = (q.data, q.message) {
         let chat_id = message.chat().id;
         let user = q.from;
+
+        let comandText = data.as_str();
+        if comandText.starts_with("command_enable") {
+            let substring = &comandText["command_enable".len() + 1..];
+            let parts: Vec<&str> = substring.split('_').collect();
+            let enable = parts.get(0).unwrap().chars().nth(0);
+            if let Some(part) = parts.get(1) {
+                // Step 3: Convert to integer
+                match part.parse::<i32>() {
+                    Ok(num) => {
+                        println!("Value at index {}: {}", 1, num);
+                        if let Some(mut db_user) = db::get_user(&pool, chat_id.0).await.unwrap() {
+                            let subs = db_user.subscribes;
+                            let subs_str = i32_to_bit_string(subs.unwrap_or(0));
+
+                            let n_us = usize::try_from(num).unwrap();
+                            let subs = replace_char_at_index(&subs_str, n_us, enable.unwrap());
+                            let new_subs = bit_string_to_i32(&subs);
+                            db_user.subscribes = new_subs;
+                            db::insert_user(&pool, &db_user).await.unwrap();
+                        } else {
+                            println!("user with id {} not found", chat_id.0);
+                        }
+                    }
+
+                    Err(_) => println!("Failed to parse '{}' as an integer", part),
+                }
+            } else {
+                println!("Index {} is out of bounds", 1);
+            }
+        }
+        if comandText.starts_with("command_disable") {}
 
         let text = match data.as_str() {
             "command_join" => handle_join(chat_id, &user, &pool).await?,
